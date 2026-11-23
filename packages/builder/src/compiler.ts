@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, rmdir } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, rmdir } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseFilterSetMeta, parseHostMeta, splitFilterToken } from "@ubdf/schema";
 import type { CanonicalFilterId, FilterSetMeta, HostMeta } from "@ubdf/schema";
@@ -19,6 +19,8 @@ export interface CompileOptions {
   gitSha: string;
   homepageUrl: string;
   generatedAt?: string;
+  incremental?: boolean;
+  cacheKey?: string;
 }
 
 type ErrorCode = "INVALID_META" | "INVALID_SET" | "LINT_FAILED"
@@ -47,6 +49,13 @@ interface CompiledSet {
   description: string;
   setPath: string;
   members: CanonicalFilterId[];
+}
+
+interface IncrementalCache {
+  version: 1;
+  shared: string;
+  key: string;
+  variants: Record<string, { source: string; ruleCount: number }>;
 }
 
 export interface CompiledManifest {
@@ -119,16 +128,109 @@ function normalizeFragment(content: string) {
   return normalized ? `${normalized}\n` : "";
 }
 
-async function readHost(root: string, hostDir: string, adapter: FilterParserAdapter) {
-  const meta = await readDescriptor(root, join(hostDir, "filter.toml"),
-    (raw) => parseHostMeta(raw, basename(hostDir)), "INVALID_META");
+function digest(content: string) {
+  return new Bun.CryptoHasher("sha256").update(content).digest("hex");
+}
+
+async function cacheFor(root: string, path: string): Promise<IncrementalCache | undefined> {
+  try {
+    await rejectSymlinks(root, path);
+    if ((await status(path))?.isSymbolicLink()) return undefined;
+    const value = await Bun.file(path).json() as Partial<IncrementalCache>;
+    if (value.version !== 1 || typeof value.shared !== "string" || typeof value.key !== "string"
+      || typeof value.variants !== "object" || value.variants === null) return undefined;
+    return value as IncrementalCache;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeCache(root: string, path: string, value: IncrementalCache) {
+  try {
+    await rejectSymlinks(root, path);
+    const directory = dirname(path);
+    await mkdir(directory, { recursive: true });
+    if ((await status(directory))?.isSymbolicLink() || (await status(path))?.isSymbolicLink()) return;
+    const temporary = await mkdtemp(join(directory, ".filter-build-cache-"));
+    try {
+      const next = join(temporary, "next.json");
+      await Bun.write(next, `${JSON.stringify(value)}\n`);
+      await rename(next, path);
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+  } catch {
+    // A cache write failure must not invalidate successful artifacts.
+  }
+}
+
+async function sharedFingerprint(root: string) {
+  const paths = ["bun.lock", "bunfig.toml", "mise.toml", "package.json", "tsconfig.json", "packages/builder/package.json", "packages/schema/package.json"];
+  for (const directory of ["packages/builder/src", "packages/schema/src"]) {
+    const full = join(root, directory);
+    if ((await status(full))?.isDirectory()) {
+      for (const entry of await readdir(full, { recursive: true, withFileTypes: true })) {
+        if (entry.isFile()) paths.push(relative(root, join(entry.parentPath, entry.name)));
+      }
+    }
+  }
+  const parts: string[] = [];
+  for (const path of paths.sort()) {
+    const full = join(root, path);
+    if ((await status(full))?.isFile()) parts.push(`${path}\0${await readText(root, full)}`);
+  }
+  return digest(`${Bun.version}\0${parts.join("\0")}`);
+}
+
+async function outputEntries(destination: string): Promise<Record<string, unknown> | undefined> {
+  try {
+    const manifest = await Bun.file(join(destination, "manifest.json")).json() as { entries?: unknown };
+    if (typeof manifest.entries !== "object" || manifest.entries === null || Array.isArray(manifest.entries)) {
+      return undefined;
+    }
+    return manifest.entries as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+function cachedReport(value: unknown, source: string, content: string, filePath: string, previous: unknown): LintReport | undefined {
+  if (typeof value !== "object" || value === null
+    || Reflect.get(value, "source") !== source
+    || !Number.isSafeInteger(Reflect.get(value, "ruleCount"))
+    || Reflect.get(value, "ruleCount") < 0
+    || typeof previous !== "object" || previous === null
+    || Reflect.get(previous, "sha256") !== digest(content)
+    || Reflect.get(previous, "ruleCount") !== Reflect.get(value, "ruleCount")) return undefined;
+  return { filePath, ruleCount: Reflect.get(value, "ruleCount") as number, errors: [] };
+}
+
+async function readHost(
+  root: string,
+  hostDir: string,
+  adapter: FilterParserAdapter,
+  cache?: IncrementalCache,
+  previousEntries?: Record<string, unknown>,
+) {
+  const descriptorPath = join(hostDir, "filter.toml");
+  const descriptor = await readText(root, descriptorPath);
+  let meta: HostMeta;
+  try {
+    meta = parseHostMeta(Bun.TOML.parse(descriptor), basename(hostDir));
+  } catch (error) {
+    throw new FilterBuildError("INVALID_META", `${descriptorPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const fragments = [];
   for (const variant of Object.keys(meta.variants).sort()) {
     const description = meta.variants[variant]!;
     const file = join(hostDir, description.file);
-    const content = normalizeFragment(await readText(root, file));
-    const report = await adapter.lint(file, content);
-    fragments.push({ variant, meta: description, content, report });
+    const raw = await readText(root, file);
+    const content = normalizeFragment(raw);
+    const id = filterId(meta.host, variant);
+    const source = digest(`${relative(root, file)}\0${raw}`);
+    const report = cachedReport(cache?.variants[id], source, content, file, previousEntries?.[id])
+      ?? await adapter.lint(file, content);
+    fragments.push({ variant, meta: description, content, report, source });
   }
   return { meta, fragments };
 }
@@ -139,7 +241,13 @@ export async function lintHostPackage(hostDir: string, adapter: FilterParserAdap
   return fragments.map(({ report }) => report);
 }
 
-async function readHosts(root: string, adapter: FilterParserAdapter, onlyHost?: string) {
+async function readHosts(
+  root: string,
+  adapter: FilterParserAdapter,
+  onlyHost?: string,
+  cache?: IncrementalCache,
+  previousEntries?: Record<string, unknown>,
+) {
   const directory = join(root, "filters");
   const hosts = [];
   for (const name of await list(root, directory)) {
@@ -149,7 +257,7 @@ async function readHosts(root: string, adapter: FilterParserAdapter, onlyHost?: 
     const path = join(directory, name);
     await rejectSymlinks(root, path);
     if ((await status(path))?.isDirectory()) {
-      hosts.push(await readHost(root, path, adapter));
+      hosts.push(await readHost(root, path, adapter, cache, previousEntries));
     }
   }
   if (onlyHost !== undefined && hosts.length === 0) {
@@ -317,7 +425,13 @@ async function validateOutput(root: string, destination: string, host?: string) 
   }
 }
 
-async function writeArtifacts(root: string, destination: string, files: Map<string, string>, host?: string) {
+async function writeArtifacts(
+  root: string,
+  destination: string,
+  files: Map<string, string>,
+  host?: string,
+  reuseUnchanged = false,
+) {
   const parent = dirname(destination);
   const lock = join(parent, `.${basename(destination)}.filter-build.lock`);
   await mkdir(lock, { recursive: false });
@@ -327,8 +441,22 @@ async function writeArtifacts(root: string, destination: string, files: Map<stri
     const previous = join(temporary, "previous");
     let restorePrevious = false;
     try {
-      for (const [path, content] of files) await Bun.write(join(next, path), content);
       await validateOutput(root, destination, host);
+      for (const [path, content] of files) {
+        const source = join(destination, path);
+        const target = join(next, path);
+        if (reuseUnchanged && (await status(source))?.isFile()
+          && Buffer.from(await Bun.file(source).arrayBuffer()).equals(Buffer.from(content))) {
+          try {
+            await mkdir(dirname(target), { recursive: true });
+            await link(source, target);
+            continue;
+          } catch {
+            // Filesystems without hard-link support write a fresh artifact.
+          }
+        }
+        await Bun.write(target, content);
+      }
       if (await status(destination)) {
         await rename(destination, previous);
         restorePrevious = true;
@@ -354,10 +482,18 @@ export async function compileWorkspace(options: CompileOptions, adapter: FilterP
   }
   const destination = resolve(root, options.outDir);
   await validateOutput(root, destination, onlyHost);
+  const cacheEnabled = options.incremental && options.cacheKey !== undefined;
+  const cachePath = join(root, ".filter-build-cache", `${digest(relative(root, destination))}.json`);
+  const shared = cacheEnabled ? await sharedFingerprint(root) : undefined;
+  const previous = cacheEnabled ? await cacheFor(root, cachePath) : undefined;
+  const cache = previous !== undefined && previous.shared === shared && previous.key === options.cacheKey
+    ? previous
+    : undefined;
+  const previousEntries = cache === undefined ? undefined : await outputEntries(destination);
   const hosts = new Map<string, HostMeta>();
   const entries = new Map<CanonicalFilterId, CompiledEntry>();
   const files = new Map<string, string>();
-  const packages = await readHosts(root, adapter);
+  const packages = await readHosts(root, adapter, undefined, cache, previousEntries);
   const selected = onlyHost === undefined
     ? packages
     : packages.filter(({ meta }) => meta.host === onlyHost);
@@ -376,7 +512,7 @@ export async function compileWorkspace(options: CompileOptions, adapter: FilterP
         description: fragment.meta.description, tags: fragment.meta.tags,
         resolvedIncludes: fragment.meta.includes ?? [], fragmentPath,
         ruleCount: fragment.report.ruleCount,
-        sha256: new Bun.CryptoHasher("sha256").update(fragment.content).digest("hex"),
+        sha256: digest(fragment.content),
       });
       files.set(fragmentPath, fragment.content);
     }
@@ -396,8 +532,13 @@ export async function compileWorkspace(options: CompileOptions, adapter: FilterP
   for (const filename of onlyHost === undefined ? await list(root, directory) : []) {
     if (!filename.endsWith(".toml")) continue;
     const path = join(directory, filename);
-    const set = await readDescriptor(root, path,
-      (raw) => parseFilterSetMeta(raw, basename(filename, ".toml")), "INVALID_SET");
+    const raw = await readText(root, path);
+    let set: FilterSetMeta;
+    try {
+      set = parseFilterSetMeta(Bun.TOML.parse(raw), basename(filename, ".toml"));
+    } catch (error) {
+      throw new FilterBuildError("INVALID_SET", `${path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const members = selectMembers(set, hosts, entries, aliases);
     const ids = orderEntries(members, entries);
     const setPath = `sets/${set.name}.txt`;
@@ -441,6 +582,25 @@ export async function compileWorkspace(options: CompileOptions, adapter: FilterP
     entries: Object.fromEntries(entries),
   };
   files.set("manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeArtifacts(root, destination, files, onlyHost);
+  await writeArtifacts(root, destination, files, onlyHost, previousEntries !== undefined);
+  if (cacheEnabled) {
+    const variants: IncrementalCache["variants"] = {};
+    for (const { meta, fragments } of packages) {
+      for (const fragment of fragments) {
+        if (fragment.report.errors.length === 0) {
+          variants[filterId(meta.host, fragment.variant)] = {
+            source: fragment.source,
+            ruleCount: fragment.report.ruleCount,
+          };
+        }
+      }
+    }
+    await writeCache(root, cachePath, {
+      version: 1,
+      shared: shared!,
+      key: options.cacheKey!,
+      variants,
+    });
+  }
   return manifest;
 }

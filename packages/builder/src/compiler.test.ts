@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compileWorkspace } from "./compiler.ts";
@@ -51,6 +51,152 @@ ${extra}
 function build(rootDir: string, outDir = "dist") {
   return compileWorkspace({ rootDir, outDir, gitSha: "demo", homepageUrl: "https://example.org" }, adapter);
 }
+
+async function filesIn(directory: string) {
+  const files = new Map<string, string>();
+  for (const entry of await readdir(directory, { recursive: true, withFileTypes: true })) {
+    if (entry.isFile()) {
+      const path = join(entry.parentPath, entry.name);
+      files.set(path.slice(directory.length + 1), await Bun.file(path).text());
+    }
+  }
+  return files;
+}
+
+test("Reuses validated variants and preserves full-build artifacts after source changes", async () => {
+  await fixture(async (root) => {
+    await writeHost(root, "a.example");
+    await writeHost(root, "b.example");
+    const calls: string[] = [];
+    const spy: FilterParserAdapter = {
+      async lint(filePath, content) {
+        calls.push(filePath);
+        return adapter.lint(filePath, content);
+      },
+    };
+    const options = {
+      rootDir: root,
+      outDir: "incremental",
+      gitSha: "demo",
+      homepageUrl: "https://example.org",
+      generatedAt: "2020-01-01T00:00:00.000Z",
+      incremental: true,
+      cacheKey: "test-adapter-v1",
+    };
+
+    await compileWorkspace(options, spy);
+    await compileWorkspace(options, spy);
+    expect(calls).toHaveLength(2);
+    const unchangedBefore = await lstat(join(root, "incremental/raw/b.example/dark.txt"));
+    const changedBefore = await lstat(join(root, "incremental/raw/a.example/dark.txt"));
+
+    await Bun.write(join(root, "filters/a.example/dark.ubo"), "a.example##html:style(color: white;)\n");
+    await compileWorkspace(options, spy);
+    expect(calls).toHaveLength(3);
+    if (process.platform === "linux") {
+      expect((await lstat(join(root, "incremental/raw/b.example/dark.txt"))).ino).toBe(unchangedBefore.ino);
+      expect((await lstat(join(root, "incremental/raw/a.example/dark.txt"))).ino).not.toBe(changedBefore.ino);
+    }
+
+    await compileWorkspace({ ...options, outDir: "full", incremental: false }, adapter);
+    expect(await filesIn(join(root, "incremental"))).toEqual(await filesIn(join(root, "full")));
+  });
+});
+
+test("Rebuilds graph and sets, removes stale artifacts, and invalidates shared inputs", async () => {
+  await fixture(async (root) => {
+    await writeHost(root, "a.example", 'includes = ["b.example::dark"]');
+    await writeHost(root, "b.example");
+    await writeSet(root, "all", "all-defaults");
+    const calls: string[] = [];
+    const spy: FilterParserAdapter = {
+      async lint(filePath, content) {
+        calls.push(filePath);
+        return adapter.lint(filePath, content);
+      },
+    };
+    const options = {
+      rootDir: root,
+      outDir: "incremental",
+      gitSha: "demo",
+      homepageUrl: "https://example.org",
+      generatedAt: "2020-01-01T00:00:00.000Z",
+      incremental: true,
+      cacheKey: "test-adapter-v1",
+    };
+
+    await compileWorkspace(options, spy);
+    await Bun.write(join(root, "filters/a.example/filter.toml"), `
+host = "a.example"
+display_name = "A example"
+allowed_domains = ["a.example"]
+default_variant = "dark"
+[variants.dark]
+file = "dark.ubo"
+description = "Dark theme"
+tags = ["dark-mode"]
+`);
+    await Bun.write(join(root, "sets/all.toml"), `
+name = "all"
+description = "Changed list"
+mode = "explicit"
+include = ["a.example"]
+`);
+    await compileWorkspace(options, spy);
+    expect(calls).toHaveLength(2);
+    expect((await Bun.file(join(root, "incremental/manifest.json")).json()).sets.all.members)
+      .toEqual(["a.example::dark"]);
+
+    await rm(join(root, "filters/b.example"), { recursive: true });
+    await compileWorkspace(options, spy);
+    expect(calls).toHaveLength(2);
+    expect(await Bun.file(join(root, "incremental/raw/b.example/dark.txt")).exists()).toBe(false);
+
+    await Bun.write(join(root, "tsconfig.json"), "{\"compilerOptions\": {}}\n");
+    await compileWorkspace(options, spy);
+    expect(calls).toHaveLength(3);
+    await compileWorkspace({ ...options, outDir: "full", incremental: false }, adapter);
+    expect(await filesIn(join(root, "incremental"))).toEqual(await filesIn(join(root, "full")));
+  });
+});
+
+test("Treats missing and corrupt incremental cache files as cold builds", async () => {
+  await fixture(async (root) => {
+    await writeHost(root, "a.example");
+    let calls = 0;
+    const spy: FilterParserAdapter = {
+      async lint(filePath, content) {
+        calls += 1;
+        return adapter.lint(filePath, content);
+      },
+    };
+    const options = {
+      rootDir: root,
+      outDir: "incremental",
+      gitSha: "demo",
+      homepageUrl: "https://example.org",
+      generatedAt: "2020-01-01T00:00:00.000Z",
+      incremental: true,
+      cacheKey: "test-adapter-v1",
+    };
+
+    await compileWorkspace(options, spy);
+    await rm(join(root, ".filter-build-cache"), { recursive: true });
+    await compileWorkspace(options, spy);
+    const [cache] = await readdir(join(root, ".filter-build-cache"));
+    await Bun.write(join(root, ".filter-build-cache", cache!), "not json");
+    await compileWorkspace(options, spy);
+    const cachePath = join(root, ".filter-build-cache", cache!);
+    const validCache = await Bun.file(cachePath).json();
+    validCache.variants["a.example::dark"].ruleCount = 99;
+    await Bun.write(cachePath, `${JSON.stringify(validCache)}\n`);
+    await compileWorkspace(options, spy);
+    expect(calls).toBe(4);
+    expect((await Bun.file(join(root, "incremental/manifest.json")).json()).entries["a.example::dark"].ruleCount)
+      .toBe(1);
+    expect(await Bun.file(join(root, "incremental/manifest.json")).exists()).toBe(true);
+  });
+});
 
 test("Builds raw files, a manifest, and each set mode in dependency order", async () => {
   await fixture(async (root) => {

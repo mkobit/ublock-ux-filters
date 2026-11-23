@@ -4,20 +4,28 @@ import type { FilterParserAdapter } from "./compiler.ts";
 
 const rootDir = fileURLToPath(new URL("../../../", import.meta.url));
 const homepageUrl = "https://github.com/mkobit/ublock-ux-filters";
-const usage = "Usage: lint [--host <host>] | build [--host <host>] [--out <directory>]";
+const usage = "Usage: lint [--host <host>] | build [--incremental] [--host <host>] [--out <directory>]";
 
 export async function runCli(args: string[], adapter: FilterParserAdapter) {
   const [command] = args;
   if (command !== "build" && command !== "lint") throw new Error(usage);
   const options = new Map<string, string>();
-  for (let index = 1; index < args.length; index += 2) {
+  let incremental = false;
+  for (let index = 1; index < args.length;) {
     const option = args[index]!;
+    if (command === "build" && option === "--incremental") {
+      if (incremental) throw new Error(usage);
+      incremental = true;
+      index += 1;
+      continue;
+    }
     const value = args[index + 1];
     if ((option !== "--host" && (command !== "build" || option !== "--out"))
       || options.has(option) || !value || value.startsWith("--")) {
       throw new Error(usage);
     }
     options.set(option, value);
+    index += 2;
   }
   const host = options.get("--host");
   if (command === "lint") {
@@ -41,6 +49,7 @@ export async function runCli(args: string[], adapter: FilterParserAdapter) {
     outDir,
     gitSha,
     homepageUrl,
+    ...(incremental ? { incremental: true, cacheKey: "aglint-v1" } : {}),
     ...(generatedAt === undefined ? {} : { generatedAt }),
   }, adapter, host);
 }

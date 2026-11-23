@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "ublock_ux_filters",
+  "project_id": "aa959d5f-4473-4253-a47a-c1fedfe5c003"
+}

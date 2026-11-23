@@ -1,0 +1,175 @@
+! Title: eBay - dark theme
+! Homepage: https://gist.github.com/mkobit/61cc104fdb1473cebe59637ca95215e7
+! Description: A dark mode override for eBay using uBlock Origin :style() filters
+
+! ==========================================================================
+! 1. GLOBAL, NATIVE CONTROL SCHEME & EBAY SKIN CSS VARIABLES
+! ==========================================================================
+! Force browser native dark scrollbars, inputs, and form controls
+ebay.com##html:style(color-scheme: dark !important; background-color: #0d1117 !important; color: #c9d1d9 !important;)
+
+! Override eBay Skin (Evo) CSS custom properties for resilience against live DOM updates
+ebay.com##:root, body, [class*="skin-"], [data-theme]:style(--color-background-primary: #0d1117 !important; --color-background-secondary: #161b22 !important; --color-background-tertiary: #21262d !important; --color-background-elevated: #161b22 !important; --color-background-floating: #161b22 !important; --color-background-surface: #161b22 !important; --color-background-popover: #161b22 !important; --color-background-modal: #161b22 !important; --color-background-inverse: #f0f6fc !important; --color-background-disabled: #21262d !important; --color-background-confirmation: #0f2d1e !important; --color-background-information: #0d2137 !important; --color-background-attention: #2d1b1e !important; --color-foreground-primary: #c9d1d9 !important; --color-foreground-secondary: #8b949e !important; --color-foreground-tertiary: #6e7681 !important; --color-foreground-disabled: #484f58 !important; --color-foreground-on-primary: #ffffff !important; --color-foreground-accent: #58a6ff !important; --color-text-primary: #c9d1d9 !important; --color-text-secondary: #8b949e !important; --color-border-primary: #30363d !important; --color-stroke-default: #30363d !important; --color-stroke-subtle: #21262d !important; --color-stroke-strong: #8b949e !important; --color-stroke-accent: #58a6ff !important; --color-action-primary: #1f6feb !important; --color-state-visited: #8957e5 !important; --color-state-primary-hover: #161b22 !important; --color-state-secondary-hover: #21262d !important;)
+
+! ==========================================================================
+! 2. CORE CANVAS, CONTAINERS, TYPOGRAPHY & LINKS
+! ==========================================================================
+! Root canvas & page containers
+ebay.com##body, #root, #app, #main, main, #mainContent, .pagecontainer, .page-container:style(background-color: #0d1117 !important; color: #c9d1d9 !important;)
+ebay.com##section, article:style(background-color: transparent !important; color: #c9d1d9 !important; border-color: #30363d !important;)
+ebay.com##hr:style(border-color: #21262d !important; background-color: #21262d !important;)
+
+! Headings & general text
+ebay.com##h1, h2, h3, h4, h5, h6:style(color: #c9d1d9 !important;)
+ebay.com##p, li, dd, dt:style(color: #d1d5db !important;)
+ebay.com##small, .secondary-text, [class*="subtext"], [class*="subtitle"]:style(color: #8b949e !important;)
+
+! Links
+ebay.com##a:link:style(color: #58a6ff !important;)
+ebay.com##a:visited:style(color: #8957e5 !important;)
+ebay.com##a:hover:style(color: #79c0ff !important;)
+
+! ==========================================================================
+! 3. GLOBAL HEADER, SEARCH BAR & NAVIGATION (#gh, .gh-*, .vl-flyout-nav)
+! ==========================================================================
+! Top bar & header wrapper
+ebay.com##header#gh, #gh, #gh-top, #gh-gb, .gh-w, [class*="gh-header"]:style(background-color: #161b22 !important; color: #c9d1d9 !important; border-bottom: 1px solid #30363d !important;)
+ebay.com###gh-v4n, #gh-p, #gh-eb, .gh-menu, .gh-t, .gh-eb-li-a:style(color: #c9d1d9 !important;)
+ebay.com###gh-ug, #gh-ug a, .gh-ua:style(color: #c9d1d9 !important;)
+
+! Search bar outer container & category selector
+ebay.com##.gh-tb, #gh-ac-box, #gh-ac-box2, .gh-search, .gh-search__input-container, .gh-search__input-wrapper, #gh-f:style(background-color: #0d1117 !important; border-color: #30363d !important; color: #d1d5db !important;)
+ebay.com##input#gh-ac, input[name="_nkw"], .gh-search__input:style(color-scheme: dark !important; background-color: transparent !important; color: #f0f6fc !important; caret-color: #58a6ff !important; border: none !important; outline: none !important; box-shadow: none !important;)
+ebay.com###gh-ac-box:focus-within, #gh-ac-box2:focus-within, .gh-search__input-container:focus-within:style(border-color: #58a6ff !important; box-shadow: 0 0 0 2px rgba(56, 139, 253, 0.3) !important;)
+ebay.com###gh-cat-box, select#gh-cat, .gh-search-categories:style(color-scheme: dark !important; background-color: #161b22 !important; color: #8b949e !important; border-color: #30363d !important;)
+
+! Search button & inner label fix
+ebay.com###gh-search-btn, input#gh-btn, button#gh-btn, .gh-search-button, .gh-search-button__btn:style(background-color: #1f6feb !important; color: #ffffff !important; border: 1px solid #388bfd !important;)
+ebay.com###gh-search-btn *, button#gh-btn *, .gh-search-button *, .gh-search-button__label:style(background-color: transparent !important; color: #ffffff !important; border: none !important;)
+ebay.com###gh-search-btn:hover, input#gh-btn:hover, button#gh-btn:hover, .gh-search-button:hover, .gh-search-button__btn:hover:style(background-color: #388bfd !important;)
+
+! Header popover menus & Search autocomplete dropdown
+ebay.com###ui-id-1, .ui-autocomplete, [class*="gh-ac-"], [class*="gh-submenu"], .gh-dd, #gh-eb-My-o, .gh-flyout, .gh-flyout__dialog, .gh-flyout__menu, [class*="gh-flyout__"], .gh-menu__flyout, .expand-dialog, [class*="expand-dialog"], [class*="popover"]:style(background-color: #161b22 !important; color: #c9d1d9 !important; border: 1px solid #30363d !important; box-shadow: 0 8px 24px rgba(1, 4, 9, 0.85) !important;)
+ebay.com##.gh-flyout__dialog *, .gh-flyout__menu *, [class*="gh-submenu"] *, #gh-eb-My-o *:style(background-color: transparent !important;)
+ebay.com##.ui-autocomplete li a, .ui-menu-item a, [class*="gh-ac-"] a, [class*="autocomplete"] a, .gh-flyout a, .gh-flyout__menu li a:style(color: #c9d1d9 !important;)
+ebay.com##.ui-autocomplete li span, .ui-menu-item span, [class*="gh-ac-"] span:style(color: #c9d1d9 !important;)
+ebay.com##.ui-autocomplete li a:visited, .gh-flyout a:visited, .gh-flyout__menu li a:visited:style(color: #8957e5 !important;)
+ebay.com##.ui-autocomplete li .ui-state-active, .ui-autocomplete li a:hover, .ui-menu-item a:hover, .ui-state-focus, [class*="gh-ac-"] li:hover, [class*="autocomplete"] li:hover, .gh-flyout a:hover, .gh-flyout__menu li a:hover:style(background-color: #21262d !important; color: #58a6ff !important; border-radius: 4px !important;)
+ebay.com##.ui-autocomplete li .ui-state-active *, .ui-autocomplete li a:hover *, .ui-menu-item a:hover *:style(color: #58a6ff !important; background-color: transparent !important;)
+
+! Category flyout navigation bar
+ebay.com##.vl-flyout-nav, [class*="vl-flyout"], .hl-cat-nav, .hl-cat-nav__container:style(background-color: #0d1117 !important; border-bottom: 1px solid #21262d !important; color: #8b949e !important;)
+ebay.com##.vl-flyout-nav a, .hl-cat-nav__js-tab a:style(color: #c9d1d9 !important;)
+ebay.com##.vl-flyout-nav__flyout, .hl-cat-nav__flyout:style(background-color: #161b22 !important; border: 1px solid #30363d !important; color: #c9d1d9 !important;)
+
+! Header icons
+ebay.com###gh svg, .gh-menu svg, [class*="gh-"] svg:style(fill: #8b949e !important; color: #8b949e !important;)
+ebay.com###gh-search-btn svg, .gh-search-button svg:style(fill: #ffffff !important; color: #ffffff !important;)
+
+! ==========================================================================
+! 4. FORMS, INPUTS, DROPDOWNS & BUTTONS
+! ==========================================================================
+! Text inputs & textareas (with explicit visible caret-color)
+ebay.com##textarea:style(color-scheme: dark !important; background-color: #161b22 !important; color: #f0f6fc !important; caret-color: #58a6ff !important; border: 1px solid #30363d !important;)
+ebay.com##textarea:focus:style(border-color: #58a6ff !important; box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.3) !important;)
+ebay.com##input:not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):not(#gh-ac):not([name="_nkw"]):style(color-scheme: dark !important; background-color: #161b22 !important; color: #f0f6fc !important; caret-color: #58a6ff !important; border: 1px solid #30363d !important;)
+ebay.com##input:not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):not(#gh-ac):not([name="_nkw"]):focus:style(border-color: #58a6ff !important; box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.3) !important;)
+ebay.com##.textbox__control, [class*="textbox"]:style(background-color: #161b22 !important; color: #f0f6fc !important; caret-color: #58a6ff !important; border-color: #30363d !important;)
+
+! Selects & dropdown controls
+ebay.com##select, option:style(color-scheme: dark !important; background-color: #161b22 !important; color: #c9d1d9 !important; border: 1px solid #30363d !important;)
+ebay.com##select:focus:style(border-color: #58a6ff !important; box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.3) !important;)
+
+! Standard, primary & secondary buttons
+ebay.com##button:not(.btn--primary):not(#gh-search-btn):not(#gh-btn):not(.gh-search-button):not(.gh-search-button__btn), .btn:not(.btn--primary):not(#gh-search-btn):not(#gh-btn), .fake-btn:not(.fake-btn--primary):style(background-color: #21262d !important; color: #c9d1d9 !important; border: 1px solid #30363d !important;)
+ebay.com##button:not(.btn--primary):not(#gh-search-btn):not(#gh-btn):not(.gh-search-button):not(.gh-search-button__btn):hover, .btn:not(.btn--primary):not(#gh-search-btn):not(#gh-btn):hover, .fake-btn:not(.fake-btn--primary):hover:style(background-color: #30363d !important; border-color: #8b949e !important;)
+ebay.com##.btn--primary, .fake-btn--primary, .x-bin-action .btn, button[type="submit"]:not(#gh-search-btn):not(#gh-btn):not(.gh-search-button):style(background-color: #238636 !important; color: #ffffff !important; border: 1px solid #2ea043 !important;)
+ebay.com##.btn--primary:hover, .fake-btn--primary:hover, .x-bin-action .btn:hover:style(background-color: #2ea043 !important;)
+ebay.com##.btn--secondary, .fake-btn--secondary, .x-atc-action .btn:style(background-color: #21262d !important; color: #58a6ff !important; border: 1px solid #30363d !important;)
+ebay.com##.btn--secondary:hover, .fake-btn--secondary:hover, .x-atc-action .btn:hover:style(background-color: #30363d !important; border-color: #58a6ff !important;)
+
+! ==========================================================================
+! 5. HOMEPAGE, BANNERS & CAROUSEL CARDS (.vl-*, .hl-*)
+! ==========================================================================
+ebay.com##.vl-banner, [class*="vl-banner"], [class*="vl-card"], [class*="hl-card"], [class*="vl-module"], [class*="vl-carousel"]:style(background-color: #161b22 !important; color: #c9d1d9 !important; border-color: #30363d !important;)
+ebay.com##.vl-card__header, [class*="vl-card"] h2, [class*="vl-card"] h3, [class*="vl-module"] h2:style(color: #c9d1d9 !important;)
+ebay.com##button.carousel__control, [class*="carousel__control"]:style(background-color: #21262d !important; color: #c9d1d9 !important; border: 1px solid #30363d !important;)
+
+! Keep product images crisp and un-inverted on dark surfaces
+ebay.com##.s-item__image-wrapper, .s-card__image-wrapper, .ux-image-carousel-item, [class*="image-treatment"]:style(background-color: #161b22 !important; border-radius: 6px !important;)
+
+! ==========================================================================
+! 6. SEARCH RESULTS & CATEGORY PAGES (srp-*, .s-item, .s-card)
+! ==========================================================================
+! Search results layout & controls bar
+ebay.com###mainContent .srp-main, .srp-river, .srp-river-main, .srp-river-results, ul.srp-results, .b-list__items_nofooter:style(background-color: #0d1117 !important; color: #c9d1d9 !important;)
+ebay.com##.srp-controls, .srp-related-searches, [class*="srp-controls"]:style(background-color: #0d1117 !important; color: #8b949e !important; border-color: #21262d !important;)
+ebay.com##.srp-controls__count, .srp-controls__count-heading:style(color: #c9d1d9 !important;)
+
+! Left filter sidebar (.srp-rail-left, .x-refine)
+ebay.com##.srp-rail-left, .x-refine, .x-refine__left__nav, .b-sidenav, [class*="x-refine"]:style(background-color: #0d1117 !important; color: #c9d1d9 !important; border-color: #21262d !important;)
+ebay.com##.x-refine__item, .x-refine__group, .x-refine__main__list:style(background-color: #0d1117 !important; border-color: #21262d !important;)
+ebay.com##.x-refine__item h3, .x-refine__item__title-container:style(color: #c9d1d9 !important;)
+ebay.com##.x-refine a, .cbx, .x-refine__multi-select-cbx:style(color: #8b949e !important;)
+ebay.com##.x-refine a:hover:style(color: #58a6ff !important;)
+
+! Search item rows & cards (.s-item, .s-card, .brwrvr__item-card)
+ebay.com##.s-item, .s-card, .brwrvr__item-card, li[class*="s-item"], div[class*="s-card"]:style(background-color: #0d1117 !important; border-color: #21262d !important; color: #d1d5db !important;)
+ebay.com##.s-item__wrapper, .s-item__info, .s-card__info, .brwrvr__item-card__body:style(background-color: #0d1117 !important; color: #d1d5db !important;)
+ebay.com##.s-item__sep, .srp-river-answer:style(border-color: #21262d !important; background-color: #0d1117 !important; color: #8b949e !important;)
+
+! Search item title, price, subtitle & metadata
+ebay.com##.s-item__title, .s-item__title span, .s-card__title, .bsig__title__text:style(color: #58a6ff !important;)
+ebay.com##a:visited .s-item__title, a:visited .s-item__title span, a:visited .s-card__title:style(color: #8957e5 !important;)
+ebay.com##.s-item__price, .s-card__price, .bsig__price:style(color: #f0f6fc !important; font-weight: 700 !important;)
+ebay.com##.s-item__subtitle, .s-item__details, .s-item__shipping, .s-item__location, .s-item__freeXDays, .s-item__SellerWithuhp, .s-item__reviews:style(color: #8b949e !important;)
+ebay.com##.s-item__etrs-text, .s-item__hotness, .s-item__authorized-seller:style(color: #f0883e !important;)
+ebay.com##.s-item__badge, .LIGHT_HIGHLIGHT, .s-item__title--tag, .s-item__title--tagblock span:style(background-color: #21262d !important; color: #8b949e !important; border: 1px solid #30363d !important; border-radius: 4px !important;)
+
+! Search hit highlights & emphasis
+ebay.com##.s-item__title .BOLD, em, mark:style(background-color: #bb800926 !important; color: #f0883e !important; font-weight: 600 !important; font-style: normal !important; padding: 1px 3px !important; border-radius: 3px !important;)
+
+! Pagination bar
+ebay.com##.pagination, .s-pagination, [class*="pagination"]:style(background-color: #0d1117 !important; color: #c9d1d9 !important; border-color: #30363d !important;)
+ebay.com##.pagination__item, .pagination__next, .pagination__previous:style(background-color: #161b22 !important; color: #c9d1d9 !important; border: 1px solid #30363d !important;)
+ebay.com##.pagination__item[aria-current="page"]:style(background-color: #1f6feb !important; color: #ffffff !important; border-color: #388bfd !important;)
+
+! ==========================================================================
+! 7. ITEM LISTING & PRODUCT DETAIL PAGES (.vim, .vi-content, .ux-*, .x-*)
+! ==========================================================================
+! Main item layout & sections
+ebay.com##.vi-content, .vim, .center-panel-container, .ux-layout-section, .ux-layout-section-evo, .ux-layout-section-module, [class*="ux-layout-"]:style(background-color: #0d1117 !important; color: #d1d5db !important; border-color: #21262d !important;)
+ebay.com##.x-item-title, .x-item-title__mainTitle, .x-item-title__mainTitle span:style(color: #f0f6fc !important;)
+ebay.com##.x-price-primary, .x-price-primary span, .x-additional-info:style(color: #f0f6fc !important;)
+ebay.com##.x-price-approx, .x-price-approx span, .x-bid-info, .x-quantity, .x-item-condition:style(color: #8b949e !important;)
+
+! Buy box, seller card & shipping panels
+ebay.com##.ux-layout-section--seller, .x-sellercard-atf, .d-stores-info-categories, [class*="sellercard"], [class*="seller-persona"]:style(background-color: #161b22 !important; color: #c9d1d9 !important; border: 1px solid #30363d !important; border-radius: 8px !important;)
+ebay.com##.ux-labels-values, .ux-labels-values__labels, .ux-labels-values__values, [class*="ux-labels-values"]:style(background-color: transparent !important; color: #d1d5db !important;)
+ebay.com##.ux-labels-values__labels-content, .ux-labels-values__labels span:style(color: #8b949e !important;)
+ebay.com##.ux-labels-values__values-content, .ux-labels-values__values span:style(color: #c9d1d9 !important;)
+ebay.com##.ux-textspans:style(color: inherit !important;)
+ebay.com##.ux-textspans--BOLD:style(color: #f0f6fc !important;)
+ebay.com##.ux-textspans--SECONDARY:style(color: #8b949e !important;)
+ebay.com##.ux-call-to-action:style(background-color: #21262d !important; color: #c9d1d9 !important; border: 1px solid #30363d !important;)
+
+! Tabs, accordions & seller description iframe container
+ebay.com##.ux-tabs, .tabs, [role="tablist"], [role="tab"]:style(background-color: #161b22 !important; color: #8b949e !important; border-color: #30363d !important;)
+ebay.com##[role="tab"][aria-selected="true"]:style(background-color: #0d1117 !important; color: #58a6ff !important; border-bottom: 2px solid #58a6ff !important;)
+ebay.com##.d-item-description, #desc_wrapper_ctr, #vi-desc-maincntr:style(background-color: #161b22 !important; color: #d1d5db !important; border: 1px solid #30363d !important; border-radius: 6px !important;)
+ebay.com##iframe#desc_ifr:style(filter: invert(0.92) hue-rotate(180deg) !important; background-color: #ffffff !important; border-radius: 6px !important;)
+
+! Modals, drawers, lightboxes, popovers & tooltips
+ebay.com##[role="dialog"], [role="menu"], [role="listbox"], .lightbox-dialog__window, .drawer-dialog__window, .tourtip__overlay, .infotip__overlay, .menu__items, [class*="__overlay"], [class*="dialog__window"], [class*="__menu"]:style(background-color: #161b22 !important; color: #c9d1d9 !important; border: 1px solid #30363d !important; box-shadow: 0 8px 24px rgba(1, 4, 9, 0.8) !important;)
+ebay.com##.lightbox-dialog__header, .drawer-dialog__header:style(background-color: #161b22 !important; border-bottom: 1px solid #30363d !important; color: #c9d1d9 !important;)
+
+! ==========================================================================
+! 8. MY EBAY, WATCHLIST, CART & FOOTER
+! ==========================================================================
+! Cart & My eBay containers
+ebay.com##.cart-bucket, .cart-summary, .app-cart, .m-container, .myebay-container, [class*="m-river"], [class*="container-card"]:style(background-color: #161b22 !important; color: #c9d1d9 !important; border-color: #30363d !important;)
+
+! Global footer
+ebay.com##footer#glbfooter, #glbfooter, #gf-BIG, #gf-t-box, .gf-menu, footer:style(background-color: #0d1117 !important; color: #6e7681 !important; border-top: 1px solid #30363d !important;)
+ebay.com##footer#glbfooter *, .gf-bttl, .gf-li a, #gf-l a:style(color: #6e7681 !important;)
+ebay.com##footer#glbfooter a:hover:style(color: #58a6ff !important;)

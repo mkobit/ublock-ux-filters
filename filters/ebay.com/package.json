@@ -1,0 +1,9 @@
+{
+  "name": "@ublock-ux-filters/ebay.com",
+  "private": true,
+  "scripts": {
+    "lint": "bun ../../packages/builder/src/index.ts lint --host ebay.com",
+    "build": "bun ../../packages/builder/src/index.ts build --host ebay.com",
+    "test": "bun run lint"
+  }
+}

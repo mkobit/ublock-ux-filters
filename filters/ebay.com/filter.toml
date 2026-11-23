@@ -1,0 +1,11 @@
+# Source URL: https://gist.githubusercontent.com/mkobit/61cc104fdb1473cebe59637ca95215e7/raw/e36dcc116bfba5286ba284ee5561dde2e12c7535/ebay-dark-mode.user.txt
+# Source revision: e36dcc116bfba5286ba284ee5561dde2e12c7535
+host = "ebay.com"
+display_name = "eBay"
+allowed_domains = ["ebay.com"]
+default_variant = "dark-mode-github-dark"
+
+[variants.dark-mode-github-dark]
+file = "dark-mode-github-dark.ubo"
+description = "Dark theme for eBay"
+tags = ["dark-mode"]

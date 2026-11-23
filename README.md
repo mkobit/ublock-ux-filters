@@ -1,5 +1,8 @@
 # uBlock UX filters
 
+[![CI](https://github.com/mkobit/ublock-ux-filters/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mkobit/ublock-ux-filters/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/mkobit/ublock-ux-filters)](https://github.com/mkobit/ublock-ux-filters/releases/latest)
+
 This project builds plain-text uBlock Origin lists that change how websites look and behave.
 The first filters apply a GitHub Dark theme to eBay, Hacker News, and Hacker News search on Algolia.
 

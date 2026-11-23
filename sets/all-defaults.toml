@@ -1,0 +1,3 @@
+name = "all-defaults"
+description = "A subscription list containing all default filters"
+mode = "all-defaults"

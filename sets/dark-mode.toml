@@ -1,0 +1,4 @@
+name = "dark-mode"
+description = "A subscription list containing dark mode filters"
+mode = "tag"
+tag = "dark-mode"

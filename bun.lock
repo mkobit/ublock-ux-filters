@@ -9,6 +9,9 @@
         "typescript": "7.0.2",
       },
     },
+    "filters/news.ycombinator.com": {
+      "name": "@ublock-ux-filters/news.ycombinator.com",
+    },
     "packages/builder": {
       "name": "@ubdf/builder",
       "dependencies": {
@@ -136,6 +139,8 @@
     "@ubdf/builder": ["@ubdf/builder@workspace:packages/builder"],
 
     "@ubdf/schema": ["@ubdf/schema@workspace:packages/schema"],
+
+    "@ublock-ux-filters/news.ycombinator.com": ["@ublock-ux-filters/news.ycombinator.com@workspace:filters/news.ycombinator.com"],
 
     "@valibot/to-json-schema": ["@valibot/to-json-schema@1.8.0", "", { "peerDependencies": { "valibot": "^1.5.0" } }, "sha512-a0M+uwCuQZEPAo65NYkFSJ14O5c213KoSZmPdoCfuFvUhfULi4T2Z6Tpjv6lTVMW9RoLm74RpRAjNEa43KcN+g=="],
 

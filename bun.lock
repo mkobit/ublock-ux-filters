@@ -9,6 +9,9 @@
         "typescript": "7.0.2",
       },
     },
+    "filters/ebay.com": {
+      "name": "@ublock-ux-filters/ebay.com",
+    },
     "filters/news.ycombinator.com": {
       "name": "@ublock-ux-filters/news.ycombinator.com",
     },
@@ -139,6 +142,8 @@
     "@ubdf/builder": ["@ubdf/builder@workspace:packages/builder"],
 
     "@ubdf/schema": ["@ubdf/schema@workspace:packages/schema"],
+
+    "@ublock-ux-filters/ebay.com": ["@ublock-ux-filters/ebay.com@workspace:filters/ebay.com"],
 
     "@ublock-ux-filters/news.ycombinator.com": ["@ublock-ux-filters/news.ycombinator.com@workspace:filters/news.ycombinator.com"],
 

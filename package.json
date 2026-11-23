@@ -1,0 +1,6 @@
+{
+  "name": "ublock-ux-filters",
+  "private": true,
+  "packageManager": "bun@1.4.4",
+  "workspaces": ["packages/*"]
+}

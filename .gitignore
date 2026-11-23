@@ -6,6 +6,7 @@ coverage/
 .env.*
 !.env.example
 /.worktrees/
+/.filter-build-cache/
 /mise.local.toml
 /.mise.local.toml
 

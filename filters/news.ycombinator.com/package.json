@@ -1,0 +1,9 @@
+{
+  "name": "@ublock-ux-filters/news.ycombinator.com",
+  "private": true,
+  "scripts": {
+    "lint": "bun ../../packages/builder/src/index.ts lint --host news.ycombinator.com",
+    "build": "bun ../../packages/builder/src/index.ts build --host news.ycombinator.com",
+    "test": "bun ../../packages/builder/src/index.ts lint --host news.ycombinator.com"
+  }
+}

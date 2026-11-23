@@ -1,0 +1,127 @@
+! Title: Hacker News & Algolia Search - dark theme
+! Homepage: https://gist.github.com/mkobit/5dde6e585083a599fda5bb2fb6dffd5e
+! Forked from: https://news.ycombinator.com/item?id=36344815
+
+! ==============================================================================
+! 1. GLOBAL & NATIVE CONTROL SCHEME
+! ==============================================================================
+news.ycombinator.com##html:style(color-scheme: dark !important;)
+hn.algolia.com##html:style(color-scheme: dark !important;)
+
+! ==============================================================================
+! 2. HACKER NEWS (news.ycombinator.com)
+! ==============================================================================
+! Canvas & main container
+news.ycombinator.com##body:style(background-color: #0d1117 !important; color: #c9d1d9 !important;)
+news.ycombinator.com###hnmain:style(background-color: #0d1117 !important; border: 1px solid #30363d !important;)
+news.ycombinator.com###hnmain > tbody > tr:first-child:style(background-color: #161b22 !important;)
+
+! Header bar
+news.ycombinator.com##tr[style*="#ff6600"]:style(background-color: #161b22 !important;)
+news.ycombinator.com##td[bgcolor="#ff6600"]:style(background-color: #161b22 !important;)
+news.ycombinator.com##td[style*="#ff6600"]:style(background-color: #161b22 !important;)
+news.ycombinator.com##.pagetop:style(color: #8b949e !important; font-weight: bold !important;)
+news.ycombinator.com##.pagetop a:style(color: #c9d1d9 !important; text-decoration: none !important;)
+news.ycombinator.com##.hnname a:style(color: #d18616 !important;)
+news.ycombinator.com##img[src="y18.svg"]:style(filter: invert(1) hue-rotate(180deg) !important; border: 1px solid #30363d !important;)
+
+! Links
+news.ycombinator.com##a:link:style(color: #58a6ff !important;)
+news.ycombinator.com##a:visited:style(color: #8957e5 !important;)
+
+! Comments & body text
+news.ycombinator.com##.commtext:style(color: #d1d5db !important; line-height: 1.45 !important;)
+news.ycombinator.com##.c00:style(color: #d1d5db !important;)
+news.ycombinator.com##font[color="#000000"]:style(color: #d1d5db !important;)
+news.ycombinator.com##.comment font:style(color: #d1d5db !important;)
+
+! Subtext & metadata
+news.ycombinator.com##.subtext:style(color: #6e7681 !important;)
+news.ycombinator.com##.subtext a:style(color: #6e7681 !important;)
+news.ycombinator.com##.subline:style(color: #6e7681 !important;)
+news.ycombinator.com##.subline a:style(color: #6e7681 !important;)
+news.ycombinator.com##.comhead:style(color: #6e7681 !important;)
+news.ycombinator.com##.comhead a:style(color: #6e7681 !important;)
+
+! Forms, inputs, dropdowns & comment textarea
+news.ycombinator.com##textarea:style(color-scheme: dark !important; background-color: #161b22 !important; color: #d1d5db !important; border: 1px solid #30363d !important; border-radius: 6px !important; padding: 8px 12px !important; outline: none !important;)
+news.ycombinator.com##textarea:focus:style(border-color: #58a6ff !important; box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.3) !important;)
+news.ycombinator.com##input:not([type="submit"]):not([type="checkbox"]):not([type="radio"]):style(color-scheme: dark !important; background-color: #161b22 !important; color: #d1d5db !important; border: 1px solid #30363d !important; border-radius: 6px !important; padding: 5px 10px !important; outline: none !important;)
+news.ycombinator.com##input:focus:style(border-color: #58a6ff !important; box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.3) !important;)
+news.ycombinator.com##select:style(color-scheme: dark !important; background-color: #161b22 !important; color: #c9d1d9 !important; border: 1px solid #30363d !important; border-radius: 6px !important; padding: 4px 8px !important; outline: none !important;)
+news.ycombinator.com##option:style(color-scheme: dark !important; background-color: #161b22 !important; color: #c9d1d9 !important;)
+news.ycombinator.com##input[type="submit"]:style(background-color: #21262d !important; color: #c9d1d9 !important; border: 1px solid #30363d !important; border-radius: 6px !important; padding: 5px 14px !important; cursor: pointer !important;)
+news.ycombinator.com##input[type="submit"]:hover:style(background-color: #30363d !important; border-color: #8b949e !important;)
+
+! Icons & footer
+news.ycombinator.com##.votearrow:style(filter: brightness(1.2) opacity(0.8) !important;)
+news.ycombinator.com##.yclinks:style(filter: brightness(0.8) !important;)
+news.ycombinator.com##.yclinks a:style(color: #6e7681 !important;)
+
+! ==============================================================================
+! 3. HN ALGOLIA SEARCH (hn.algolia.com)
+! ==============================================================================
+! Root canvas & background
+hn.algolia.com##body:style(background-color: #0d1117 !important; color: #d1d5db !important;)
+hn.algolia.com###root:style(background-color: #0d1117 !important;)
+hn.algolia.com##main:style(background-color: #0d1117 !important; color: #d1d5db !important;)
+hn.algolia.com##div[class*="container"]:style(background-color: #0d1117 !important;)
+
+! Header bar
+hn.algolia.com##header:style(background-color: #161b22 !important; border-bottom: 1px solid #30363d !important;)
+hn.algolia.com##.SearchHeader:style(background-color: #161b22 !important; border-bottom: 1px solid #30363d !important;)
+hn.algolia.com##div[class*="SearchHeader"]:style(background-color: #161b22 !important; border-bottom: 1px solid #30363d !important;)
+hn.algolia.com##.SearchHeader_label:style(color: #c9d1d9 !important;)
+hn.algolia.com##.SearchHeader_settings svg:style(fill: #8b949e !important;)
+hn.algolia.com##.SearchHeader_logo:style(border: 1px solid #30363d !important;)
+hn.algolia.com##.SearchHeader_logo svg:style(filter: invert(1) hue-rotate(180deg) !important;)
+
+! Search input & filter bar
+hn.algolia.com##input[type="search"]:style(color-scheme: dark !important; background-color: #0d1117 !important; color: #d1d5db !important; border: 1px solid #30363d !important; border-radius: 6px !important; padding: 6px 12px !important; outline: none !important;)
+hn.algolia.com##input[type="search"]:focus:style(border-color: #58a6ff !important; box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.3) !important;)
+hn.algolia.com##.SearchFilters:style(background-color: #0d1117 !important; color: #8b949e !important;)
+hn.algolia.com##div[class*="SearchFilters"]:style(background-color: #0d1117 !important; color: #8b949e !important;)
+hn.algolia.com##div[class*="SearchFilters"] span:style(color: #8b949e !important;)
+hn.algolia.com##div[class*="SearchFilters"] label:style(color: #8b949e !important;)
+hn.algolia.com##.SearchFilters_filters:style(color: #8b949e !important;)
+hn.algolia.com##.SearchFilters_meta:style(color: #6e7681 !important;)
+hn.algolia.com##svg:style(fill: #8b949e !important;)
+
+! Dropdowns & buttons
+hn.algolia.com##select:style(color-scheme: dark !important; background-color: #161b22 !important; color: #c9d1d9 !important; border: 1px solid #30363d !important; border-radius: 6px !important; padding: 5px 10px !important; outline: none !important;)
+hn.algolia.com##select:focus:style(border-color: #58a6ff !important; box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.3) !important;)
+hn.algolia.com##option:style(color-scheme: dark !important; background-color: #161b22 !important; color: #c9d1d9 !important;)
+hn.algolia.com##button:style(background-color: #21262d !important; color: #c9d1d9 !important; border: 1px solid #30363d !important; border-radius: 6px !important; padding: 6px 16px !important; cursor: pointer !important;)
+hn.algolia.com##button:hover:style(background-color: #30363d !important; border-color: #8b949e !important;)
+hn.algolia.com##button[type="submit"]:style(background-color: #238636 !important; color: #ffffff !important; border: 1px solid #2ea043 !important; border-radius: 6px !important;)
+
+! Settings page card, containers, headings, inputs & back link
+hn.algolia.com##main > div:style(background-color: #0d1117 !important; border-color: #30363d !important; color: #d1d5db !important;)
+hn.algolia.com##section:style(background-color: #0d1117 !important; border-color: #30363d !important; color: #d1d5db !important;)
+hn.algolia.com##form:style(background-color: #0d1117 !important; border-color: #30363d !important; color: #d1d5db !important;)
+hn.algolia.com##h2:style(color: #c9d1d9 !important; border-bottom: 1px solid #21262d !important;)
+hn.algolia.com##h3:style(color: #c9d1d9 !important; border-bottom: 1px solid #21262d !important;)
+hn.algolia.com##h4:style(color: #c9d1d9 !important; border-bottom: 1px solid #21262d !important;)
+hn.algolia.com##label:style(color: #d1d5db !important;)
+hn.algolia.com##input:not([type="checkbox"]):not([type="submit"]):not([type="search"]):style(color-scheme: dark !important; background-color: #161b22 !important; color: #d1d5db !important; border: 1px solid #30363d !important; border-radius: 6px !important; padding: 5px 10px !important; outline: none !important;)
+hn.algolia.com##input:focus:style(border-color: #58a6ff !important; box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.3) !important;)
+hn.algolia.com##input[type="checkbox"]:style(accent-color: #1f6feb !important;)
+hn.algolia.com##a[class*="back"]:style(color: #58a6ff !important;)
+hn.algolia.com##a[href*="/"]:has(svg):style(color: #58a6ff !important;)
+
+! Results & content
+hn.algolia.com##article:style(background-color: #0d1117 !important; border-bottom: 1px solid #21262d !important; color: #d1d5db !important;)
+hn.algolia.com##div[class*="Story"]:style(background-color: #0d1117 !important; border-bottom: 1px solid #21262d !important; color: #d1d5db !important;)
+hn.algolia.com##div[class*="Comment"]:style(background-color: #0d1117 !important; border-bottom: 1px solid #21262d !important; color: #d1d5db !important;)
+hn.algolia.com##div[class*="item"]:style(background-color: #0d1117 !important; border-bottom: 1px solid #21262d !important; color: #d1d5db !important;)
+hn.algolia.com##a:link:style(color: #58a6ff !important;)
+hn.algolia.com##a:visited:style(color: #8957e5 !important;)
+hn.algolia.com##p:style(color: #d1d5db !important;)
+
+! Matched term highlights
+hn.algolia.com##em:style(background-color: #bb800926 !important; color: #f0883e !important; font-weight: 600 !important; font-style: normal !important; padding: 1px 3px !important; border-radius: 3px !important;)
+hn.algolia.com##mark:style(background-color: #bb800926 !important; color: #f0883e !important; font-weight: 600 !important; font-style: normal !important; padding: 1px 3px !important; border-radius: 3px !important;)
+
+! Footer
+hn.algolia.com##footer:style(background-color: #0d1117 !important; color: #6e7681 !important; border-top: 1px solid #30363d !important;)
+hn.algolia.com##footer *:style(color: #6e7681 !important;)

@@ -93,6 +93,83 @@ describe("Host descriptors", () => {
       variants: { "dark-mode-github-dark": { ...variant, includes: ["ebay.com"] } },
     }, "ebay.com")).toThrow(/includes/);
   });
+
+  test("Preserves valid preview metadata with multiple targets and wildcard TLDs", () => {
+    const result = parseHostMeta({
+      ...host,
+      allowed_domains: ["ebay.*", "example.org"],
+      preview: {
+        ci: false,
+        targets: [
+          {
+            url: "https://www.ebay.com/sch/i.html?_nkw=keyboard",
+            label: "ebay-search",
+            ci: false,
+            wait_for: ".srp-results",
+          },
+          {
+            url: "https://www.ebay.co.uk/",
+            label: "ebay-uk",
+          },
+          {
+            url: "https://sub.example.org/items",
+            label: "example-sub",
+            ci: true,
+          },
+        ],
+      },
+    }, "ebay.com");
+
+    expect(result.preview).toEqual({
+      ci: false,
+      targets: [
+        {
+          url: "https://www.ebay.com/sch/i.html?_nkw=keyboard",
+          label: "ebay-search",
+          ci: false,
+          wait_for: ".srp-results",
+        },
+        {
+          url: "https://www.ebay.co.uk/",
+          label: "ebay-uk",
+        },
+        {
+          url: "https://sub.example.org/items",
+          label: "example-sub",
+          ci: true,
+        },
+      ],
+    });
+  });
+
+  test("Omits preview when not configured", () => {
+    const result = parseHostMeta(host, "ebay.com");
+    expect(result).not.toHaveProperty("preview");
+  });
+
+  test.each([
+    ["Empty preview targets", { targets: [] }, /preview\.targets/],
+    ["Non-https preview URL", { targets: [{ url: "http://www.ebay.com/", label: "home" }] }, /url/],
+    ["Malformed preview URL", { targets: [{ url: "not-a-url", label: "home" }] }, /url/],
+    ["Preview URL outside allowed_domains", { targets: [{ url: "https://notebay.com/", label: "home" }] }, /url/],
+    ["Preview URL exceeding wildcard TLD suffix", { targets: [{ url: "https://ebay.com.evil.com/", label: "home" }] }, /url/],
+    [
+      "Duplicate preview target labels",
+      {
+        targets: [
+          { url: "https://www.ebay.com/", label: "home" },
+          { url: "https://www.ebay.de/", label: "home" },
+        ],
+      },
+      /label/,
+    ],
+    ["Invalid preview target label slug", { targets: [{ url: "https://www.ebay.com/", label: "Bad_Label" }] }, /label/],
+    ["Non-boolean preview.ci", { ci: "yes", targets: [{ url: "https://www.ebay.com/", label: "home" }] }, /preview\.ci/],
+    ["Non-boolean target.ci", { targets: [{ url: "https://www.ebay.com/", label: "home", ci: 1 }] }, /ci/],
+    ["Empty wait_for selector", { targets: [{ url: "https://www.ebay.com/", label: "home", wait_for: "   " }] }, /wait_for/],
+  ] as const)("Rejects preview: %s", (_, preview, field) => {
+    expect(() => parseHostMeta({ ...host, preview }, "ebay.com")).toThrow(field);
+  });
 });
 
 describe("Set descriptors", () => {

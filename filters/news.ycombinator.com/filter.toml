@@ -9,3 +9,18 @@ default_variant = "dark-mode-github-dark"
 file = "dark-mode-github-dark.ubo"
 description = "Dark theme for Hacker News and Algolia Search"
 tags = ["dark-mode"]
+
+[preview]
+ci = true
+
+[[preview.targets]]
+url = "https://news.ycombinator.com/"
+label = "hn-frontpage"
+ci = true
+wait_for = ".athing"
+
+[[preview.targets]]
+url = "https://hn.algolia.com/"
+label = "hn-algolia"
+ci = true
+wait_for = "input[type='search']"

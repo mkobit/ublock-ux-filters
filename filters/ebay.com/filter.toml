@@ -9,3 +9,11 @@ default_variant = "dark-mode-github-dark"
 file = "dark-mode-github-dark.ubo"
 description = "Dark theme for eBay"
 tags = ["dark-mode"]
+
+[preview]
+ci = false
+
+[[preview.targets]]
+url = "https://www.ebay.com/sch/i.html?_nkw=keyboard"
+label = "ebay-search"
+ci = false

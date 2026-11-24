@@ -7,6 +7,18 @@ export interface VariantMeta {
   includes?: CanonicalFilterId[];
 }
 
+export interface PreviewTargetMeta {
+  url: string;
+  label: string;
+  ci?: boolean;
+  wait_for?: string;
+}
+
+export interface PreviewMeta {
+  ci?: boolean;
+  targets: PreviewTargetMeta[];
+}
+
 export interface HostMeta {
   host: string;
   display_name: string;
@@ -14,6 +26,7 @@ export interface HostMeta {
   default_variant?: string;
   variants: Record<string, VariantMeta>;
   aliases?: Record<string, string>;
+  preview?: PreviewMeta;
 }
 
 export interface FilterSetMeta {
@@ -114,6 +127,95 @@ function readVariant(value: unknown, field: string): VariantMeta {
   return result;
 }
 
+function readBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    return invalid(field, "a boolean");
+  }
+  return value;
+}
+
+function isTldSuffix(tld: string): boolean {
+  const labels = tld.split(".");
+  return labels.length >= 1 && labels.length <= 2 && labels.every((label) => hostLabel.test(label));
+}
+
+function matchesAllowedDomain(hostname: string, pattern: string): boolean {
+  const host = hostname.toLowerCase();
+  const normalized = pattern.toLowerCase();
+  if (normalized.endsWith(".*")) {
+    const prefix = normalized.slice(0, -2);
+    if (prefix === "") {
+      return false;
+    }
+    if (host.startsWith(`${prefix}.`)) {
+      return isTldSuffix(host.slice(prefix.length + 1));
+    }
+    const marker = `.${prefix}.`;
+    const idx = host.lastIndexOf(marker);
+    if (idx !== -1) {
+      return isTldSuffix(host.slice(idx + marker.length));
+    }
+    return false;
+  }
+  return host === normalized || host.endsWith(`.${normalized}`);
+}
+
+function readPreviewTarget(
+  value: unknown,
+  field: string,
+  allowedDomains: string[],
+  seenLabels: Set<string>,
+): PreviewTargetMeta {
+  const raw = readRecord(value, field);
+  const urlText = readText(raw.url, `${field}.url`);
+  let parsed: URL;
+  try {
+    parsed = new URL(urlText);
+  } catch {
+    return invalid(`${field}.url`, "a valid https URL");
+  }
+  if (parsed.protocol !== "https:") {
+    return invalid(`${field}.url`, "an https URL");
+  }
+  if (!allowedDomains.some((pattern) => matchesAllowedDomain(parsed.hostname, pattern))) {
+    return invalid(`${field}.url`, "a URL whose hostname matches allowed_domains");
+  }
+
+  const label = readText(raw.label, `${field}.label`);
+  if (!slug.test(label)) {
+    return invalid(`${field}.label`, "a lowercase slug identifier");
+  }
+  if (seenLabels.has(label)) {
+    return invalid(`${field}.label`, "a unique label within the host");
+  }
+  seenLabels.add(label);
+
+  const result: PreviewTargetMeta = { url: urlText, label };
+  if (raw.ci !== undefined) {
+    result.ci = readBoolean(raw.ci, `${field}.ci`);
+  }
+  if (raw.wait_for !== undefined) {
+    result.wait_for = readText(raw.wait_for, `${field}.wait_for`);
+  }
+  return result;
+}
+
+function readPreview(value: unknown, allowedDomains: string[]): PreviewMeta {
+  const raw = readRecord(value, "preview");
+  const seenLabels = new Set<string>();
+  const targets = readList(raw.targets, "preview.targets", (item, itemField) =>
+    readPreviewTarget(item, itemField, allowedDomains, seenLabels),
+  );
+  if (targets.length === 0) {
+    return invalid("preview.targets", "an array with at least one target");
+  }
+  const result: PreviewMeta = { targets };
+  if (raw.ci !== undefined) {
+    result.ci = readBoolean(raw.ci, "preview.ci");
+  }
+  return result;
+}
+
 function readAlias(value: unknown, field: string): string {
   const alias = readText(value, field);
   if (!slug.test(alias) && splitFilterToken(alias)?.variant === undefined) {
@@ -164,6 +266,9 @@ export function parseHostMeta(value: unknown, dirHost: string): HostMeta {
         readAlias(target, `aliases.${source}`),
       ]),
     );
+  }
+  if (raw.preview !== undefined) {
+    result.preview = readPreview(raw.preview, allowedDomains);
   }
   return result;
 }

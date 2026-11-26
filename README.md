@@ -30,7 +30,14 @@ The lists build locally today.
 The publishing plan is to attach the generated text files to GitHub Releases.
 A latest-release asset URL will let uBlock Origin receive updates from the same subscription URL.
 A tagged-release asset URL will let a user select a specific version.
+Use an unprefixed UTC CalVer tag such as `2026.11.5` for each published release.
+Attach the generated lists to the draft before publishing it.
 Public subscription URLs are pending.
+
+## Pull requests
+
+Open a pull request for changes to `main`.
+Wait for the required CI checks to pass, then squash merge.
 
 ## Project tracking
 

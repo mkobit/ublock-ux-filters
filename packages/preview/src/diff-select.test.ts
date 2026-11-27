@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { compileWorkspace } from "@ubdf/builder/compiler";
+import type { FilterParserAdapter } from "@ubdf/builder/compiler";
 import {
   classifyChangedPaths,
   isTargetEnabledForCi,
@@ -420,5 +422,135 @@ describe("selectCapturePlan", () => {
       "mixed.example/on:capture",
       "mixed.example/off:capture",
     ]);
+  });
+
+  test("changing an included fragment selects affected dependent variants for capture", async () => {
+    const testAdapter: FilterParserAdapter = {
+      async lint(filePath, content) {
+        return { filePath, ruleCount: content.trim() ? 1 : 0, errors: [] };
+      },
+    };
+
+    const headRoot = createTempDir("ubouf-head-");
+    const baseRoot = createTempDir("ubouf-base-");
+
+    const writeRepo = (root: string, leafRule: string): void => {
+      mkdirSync(join(root, "filters", "leaf.example"), { recursive: true });
+      writeFileSync(
+        join(root, "filters", "leaf.example", "filter.toml"),
+        `host = "leaf.example"
+display_name = "Leaf"
+allowed_domains = ["leaf.example"]
+
+[variants.base]
+file = "base.ubo"
+description = "Leaf base"
+tags = []
+`,
+        "utf8",
+      );
+      writeFileSync(join(root, "filters", "leaf.example", "base.ubo"), `${leafRule}\n`, "utf8");
+
+      mkdirSync(join(root, "filters", "mid.example"), { recursive: true });
+      writeFileSync(
+        join(root, "filters", "mid.example", "filter.toml"),
+        `host = "mid.example"
+display_name = "Mid"
+allowed_domains = ["mid.example"]
+
+[variants.shared]
+file = "shared.ubo"
+description = "Mid shared"
+tags = []
+includes = ["leaf.example::base"]
+`,
+        "utf8",
+      );
+      writeFileSync(join(root, "filters", "mid.example", "shared.ubo"), "mid.example##.mid\n", "utf8");
+
+      mkdirSync(join(root, "filters", "dependent.example"), { recursive: true });
+      writeFileSync(
+        join(root, "filters", "dependent.example", "filter.toml"),
+        `host = "dependent.example"
+display_name = "Dependent"
+allowed_domains = ["dependent.example"]
+
+[variants.dark]
+file = "dark.ubo"
+description = "Dependent dark"
+tags = []
+includes = ["mid.example::shared"]
+
+[preview]
+ci = true
+
+[[preview.targets]]
+url = "https://dependent.example/"
+label = "home"
+`,
+        "utf8",
+      );
+      writeFileSync(join(root, "filters", "dependent.example", "dark.ubo"), "dependent.example##body\n", "utf8");
+
+      mkdirSync(join(root, "filters", "unrelated.example"), { recursive: true });
+      writeFileSync(
+        join(root, "filters", "unrelated.example", "filter.toml"),
+        `host = "unrelated.example"
+display_name = "Unrelated"
+allowed_domains = ["unrelated.example"]
+
+[variants.dark]
+file = "dark.ubo"
+description = "Unrelated dark"
+tags = []
+
+[preview]
+ci = true
+
+[[preview.targets]]
+url = "https://unrelated.example/"
+label = "home"
+`,
+        "utf8",
+      );
+      writeFileSync(join(root, "filters", "unrelated.example", "dark.ubo"), "unrelated.example##body\n", "utf8");
+    };
+
+    writeRepo(headRoot, "leaf.example##.v2");
+    writeRepo(baseRoot, "leaf.example##.v1");
+
+    await compileWorkspace(
+      { rootDir: headRoot, outDir: "dist", gitSha: "head", homepageUrl: "https://example.org" },
+      testAdapter,
+    );
+    await compileWorkspace(
+      { rootDir: baseRoot, outDir: "dist", gitSha: "base", homepageUrl: "https://example.org" },
+      testAdapter,
+    );
+
+    const deps: DiffSelectDependencies = {
+      getChangedFiles: async () => ["filters/leaf.example/base.ubo"],
+      buildFilters: async () => {},
+      prepareBaseCheckout: async () => ({
+        baseRootDir: baseRoot,
+        baseDistDir: join(baseRoot, "dist"),
+        cleanup: () => {},
+      }),
+    };
+
+    const plan = await selectCapturePlan({ rootDir: headRoot, baseRef: "main", ci: true }, deps);
+    expect(plan.targets).toEqual([
+      {
+        kind: "capture",
+        host: "dependent.example",
+        variant: "dark",
+        label: "home",
+        url: "https://dependent.example/",
+        panelsMode: "3-way",
+        prFilterPath: join(headRoot, "dist", "raw", "dependent.example", "dark.txt"),
+        baseFilterPath: join(baseRoot, "dist", "raw", "dependent.example", "dark.txt"),
+      },
+    ]);
+    plan.cleanup();
   });
 });

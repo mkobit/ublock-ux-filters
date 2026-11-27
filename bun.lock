@@ -28,6 +28,7 @@
     "packages/preview": {
       "name": "@ubdf/preview",
       "dependencies": {
+        "@ubdf/builder": "workspace:*",
         "@ubdf/schema": "workspace:*",
       },
     },

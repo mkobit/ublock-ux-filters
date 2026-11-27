@@ -41,7 +41,7 @@ class BuildLockError extends Error {
   readonly code = "EEXIST";
 }
 
-interface CompiledEntry {
+export interface CompiledEntry {
   id: CanonicalFilterId;
   host: string;
   variant: string;
@@ -339,7 +339,10 @@ function compileAliases(hosts: HostMeta[], entries: Map<CanonicalFilterId, Compi
   return aliases;
 }
 
-function orderEntries(members: CanonicalFilterId[], entries: Map<CanonicalFilterId, CompiledEntry>) {
+export function orderEntries(
+  members: CanonicalFilterId[],
+  entries: Map<CanonicalFilterId, Pick<CompiledEntry, "resolvedIncludes">>,
+) {
   const ordered = new Set<CanonicalFilterId>();
   const active = new Set<CanonicalFilterId>();
   function visit(id: CanonicalFilterId) {
@@ -358,6 +361,17 @@ function orderEntries(members: CanonicalFilterId[], entries: Map<CanonicalFilter
   }
   members.forEach(visit);
   return [...ordered];
+}
+
+export function stripFragmentHeaders(fragment: string): string {
+  return fragment.replace(/^(?:\[Adblock[^\n]*\]|!\s*(?:Title|Expires|Version|Homepage):[^\n]*)\n/gim, "");
+}
+
+export function composeFragments(
+  ids: CanonicalFilterId[],
+  readFragment: (id: CanonicalFilterId) => string,
+): string {
+  return ids.map((id) => stripFragmentHeaders(readFragment(id))).join("");
 }
 
 function selectMembers(
@@ -744,9 +758,8 @@ export async function compileWorkspace(
         `! Homepage: ${options.homepageUrl}`,
         `! Included: ${ids.join(", ")}`,
       ].join("\n");
-      const content = ids.map((id) => files.get(entries.get(id)!.fragmentPath)!)
-        .map((fragment) => fragment.replace(/^(?:\[Adblock[^\n]*\]|!\s*(?:Title|Expires|Version|Homepage):[^\n]*)\n/gim, ""));
-      files.set(setPath, `${header}\n\n${content.join("")}`);
+      const content = composeFragments(ids, (id) => files.get(entries.get(id)!.fragmentPath)!);
+      files.set(setPath, `${header}\n\n${content}`);
       sets.set(set.name, { name: set.name, description: set.description, setPath, members });
     }
     if (onlyHost !== undefined) {

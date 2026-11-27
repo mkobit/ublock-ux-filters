@@ -1,0 +1,9 @@
+{
+  "name": "ublock-ux-filters",
+  "main": "packages/web/src/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "dist-web",
+    "binding": "ASSETS"
+  }
+}

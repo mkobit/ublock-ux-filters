@@ -1,0 +1,9 @@
+{
+  "name": "@ublock-ux-filters/reddit.com",
+  "private": true,
+  "scripts": {
+    "lint": "bun ../../packages/builder/src/index.ts lint --host reddit.com",
+    "build": "bun ../../packages/builder/src/index.ts build --host reddit.com",
+    "test": "bun run lint"
+  }
+}

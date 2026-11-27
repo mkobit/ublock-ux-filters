@@ -1,0 +1,22 @@
+host = "reddit.com"
+display_name = "Reddit"
+allowed_domains = ["reddit.com"]
+default_variant = "no-login-modals"
+
+[variants.no-login-modals]
+file = "no-login-modals.ubo"
+description = "Remove unauthenticated login modals, sign-in nags, and user-friction overlays on Reddit"
+tags = ["ux", "anti-nag", "login-wall"]
+
+[preview]
+ci = false
+
+[[preview.targets]]
+url = "https://www.reddit.com/"
+label = "reddit-home"
+ci = false
+
+[[preview.targets]]
+url = "https://old.reddit.com/"
+label = "reddit-old"
+ci = false

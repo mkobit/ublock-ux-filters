@@ -11,16 +11,16 @@ description = "Dark theme for Hacker News and Algolia Search"
 tags = ["dark-mode"]
 
 [preview]
-ci = false
+ci = true
 
 [[preview.targets]]
 url = "https://news.ycombinator.com/"
 label = "hn-frontpage"
-ci = false
-wait_for = ".athing"
+ci = true
+wait_for = "#ubouf-nonexistent-selector"
 
 [[preview.targets]]
 url = "https://hn.algolia.com/"
 label = "hn-algolia"
-ci = false
+ci = true
 wait_for = "input[type='search']"

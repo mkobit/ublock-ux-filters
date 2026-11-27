@@ -206,7 +206,7 @@ async function defaultPrepareBaseCheckout(
 ): Promise<BaseCheckout> {
   const tmpParent = mkdtempSync(join(tmpdir(), "ubouf-base-"));
   const worktreeDir = join(tmpParent, "worktree");
-  const baseDistDir = join(tmpParent, "dist");
+  const baseDistDir = join(worktreeDir, "dist");
 
   const cleanupWorktree = (): void => {
     if (existsSync(worktreeDir)) {

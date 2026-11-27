@@ -24,6 +24,20 @@ The compiler reads each site's `filter.toml` and `.ubo` files under [`filters/`]
 It validates the descriptors and filter rules, then writes the subscription lists to `dist/sets/`, individual variants to `dist/raw/`, and metadata to `dist/manifest.json`.
 For repeat builds, use `mise exec -- bun run build --incremental` to reuse unchanged output.
 
+### Build the web catalog
+
+After `mise exec -- bun run build`, generate the static filter catalog in `dist-web/` from `dist/`:
+
+```sh
+mise exec -- bun run build:web
+```
+
+Pass `--base-url <url>` to emit canonical `abp:subscribe` links for a deployed host:
+
+```sh
+mise exec -- bun run build:web --base-url https://example.com
+```
+
 ## Add and validate a filter variant
 
 Each site lives in its own directory under [`filters/`](filters/), named by its primary host (for example, [`filters/news.ycombinator.com/`](filters/news.ycombinator.com/)).
@@ -93,6 +107,7 @@ mise exec -- bun packages/builder/src/index.ts build --host news.ycombinator.com
 
 - [`packages/schema`](packages/schema/): descriptor types and runtime validation for `filter.toml` and `sets/*.toml`.
 - [`packages/builder`](packages/builder/): `.ubo` linter (`@adguard/aglint`) and subscription compiler writing to `dist/`.
+- [`packages/web`](packages/web/): static filter catalog generator writing to `dist-web/`.
 - [`packages/preview`](packages/preview/): isolated Firefox and uBlock Origin preview, headless 3-way capture, and README demo recorder.
 - [`filters/*`](filters/): per-host filter packages containing `filter.toml` and `.ubo` fragments.
 

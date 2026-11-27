@@ -5,6 +5,7 @@
   "workspaces": ["packages/*", "filters/*"],
   "scripts": {
     "build": "bun packages/builder/src/index.ts build",
+    "build:web": "bun packages/web/src/index.ts build",
     "capture": "bun packages/preview/src/cli.ts capture",
     "demo": "bun packages/preview/src/cli.ts demo",
     "lint": "bun packages/builder/src/index.ts lint",

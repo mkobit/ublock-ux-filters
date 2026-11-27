@@ -125,3 +125,5 @@ hn.algolia.com##mark:style(background-color: #bb800926 !important; color: #f0883
 ! Footer
 hn.algolia.com##footer:style(background-color: #0d1117 !important; color: #6e7681 !important; border-top: 1px solid #30363d !important;)
 hn.algolia.com##footer *:style(color: #6e7681 !important;)
+
+news.ycombinator.com##.ubouf-ci-test-none

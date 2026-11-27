@@ -10,8 +10,12 @@ export interface LintReport {
   errors: Array<{ line: number; rule: string; message: string }>;
 }
 
+export interface LintOptions {
+  allowedDomains?: readonly string[];
+}
+
 export interface FilterParserAdapter {
-  lint(filePath: string, content: string): Promise<LintReport>;
+  lint(filePath: string, content: string, options?: LintOptions): Promise<LintReport>;
 }
 
 export interface CompileOptions {
@@ -243,7 +247,7 @@ async function readFragment(
   const id = filterId(meta.host, variant);
   const source = digest(`${relative(root, file)}\0${raw}`);
   const report = cachedReport(cache?.variants[id], source, content, file, previousEntries?.[id])
-    ?? await adapter.lint(file, content);
+    ?? await adapter.lint(file, content, { allowedDomains: meta.allowed_domains });
   return { variant, meta: description, content, report, source };
 }
 

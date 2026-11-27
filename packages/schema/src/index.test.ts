@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseFilterSetMeta, parseHostMeta, splitFilterToken } from "./index.ts";
+import { matchesAllowedDomain, parseFilterSetMeta, parseHostMeta, splitFilterToken } from "./index.ts";
 
 const variant = {
   file: "dark-mode-github-dark.ubo",
@@ -236,5 +236,21 @@ describe("Filter tokens", () => {
     ["ebay.com/path", null],
   ] as const)("Parses %s", (token, expected) => {
     expect(splitFilterToken(token)).toEqual(expected);
+  });
+});
+
+describe("matchesAllowedDomain", () => {
+  test.each([
+    ["ebay.com", "ebay.com", true],
+    ["www.ebay.com", "ebay.com", true],
+    ["www.ebay.co.uk", "ebay.*", true],
+    ["ebay.*", "ebay.*", true],
+    ["www.ebay.*", "ebay.*", true],
+    ["ebay.*", "ebay.com", false],
+    ["ebay.*", "www.ebay.*", false],
+    ["notebay.*", "ebay.*", false],
+    ["ebay.*", ".*", false],
+  ] as const)("matchesAllowedDomain(%s, %s) -> %s", (hostname, pattern, expected) => {
+    expect(matchesAllowedDomain(hostname, pattern)).toBe(expected);
   });
 });

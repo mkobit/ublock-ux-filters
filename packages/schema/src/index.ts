@@ -139,13 +139,16 @@ function isTldSuffix(tld: string): boolean {
   return labels.length >= 1 && labels.length <= 2 && labels.every((label) => hostLabel.test(label));
 }
 
-function matchesAllowedDomain(hostname: string, pattern: string): boolean {
+export function matchesAllowedDomain(hostname: string, pattern: string): boolean {
   const host = hostname.toLowerCase();
   const normalized = pattern.toLowerCase();
   if (normalized.endsWith(".*")) {
     const prefix = normalized.slice(0, -2);
     if (prefix === "") {
       return false;
+    }
+    if (host.endsWith(".*")) {
+      return host === normalized || host.endsWith(`.${normalized}`);
     }
     if (host.startsWith(`${prefix}.`)) {
       return isTldSuffix(host.slice(prefix.length + 1));
@@ -155,6 +158,9 @@ function matchesAllowedDomain(hostname: string, pattern: string): boolean {
     if (idx !== -1) {
       return isTldSuffix(host.slice(idx + marker.length));
     }
+    return false;
+  }
+  if (host.endsWith(".*")) {
     return false;
   }
   return host === normalized || host.endsWith(`.${normalized}`);

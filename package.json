@@ -6,6 +6,7 @@
   "scripts": {
     "build": "bun packages/builder/src/index.ts build",
     "capture": "bun packages/preview/src/cli.ts capture",
+    "demo": "bun packages/preview/src/cli.ts demo",
     "lint": "bun packages/builder/src/index.ts lint",
     "preview": "bun packages/preview/src/cli.ts preview",
     "typecheck": "tsc"

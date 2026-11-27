@@ -291,6 +291,36 @@ export class WebDriverClient {
     return Uint8Array.from(Buffer.from(base64, "base64"));
   }
 
+  async hoverSelector(selector: string): Promise<void> {
+    const element = await this.request<Record<string, string>>("POST", "/element", {
+      using: "css selector",
+      value: selector,
+    });
+    const elementId =
+      element["element-6066-11e4-a52e-4f735466cecf"] ?? Object.values(element)[0];
+    if (!elementId) {
+      throw new Error(`Element not found for hover selector: ${selector}`);
+    }
+    await this.request("POST", "/actions", {
+      actions: [
+        {
+          type: "pointer",
+          id: "mouse",
+          parameters: { pointerType: "mouse" },
+          actions: [
+            {
+              type: "pointerMove",
+              duration: 100,
+              origin: { "element-6066-11e4-a52e-4f735466cecf": elementId },
+              x: 0,
+              y: 0,
+            },
+          ],
+        },
+      ],
+    });
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return;

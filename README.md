@@ -89,6 +89,36 @@ mise exec -- bun packages/builder/src/index.ts lint --host news.ycombinator.com
 mise exec -- bun packages/builder/src/index.ts build --host news.ycombinator.com
 ```
 
+## Workspace packages
+
+- [`packages/schema`](packages/schema/): descriptor types and runtime validation for `filter.toml` and `sets/*.toml`.
+- [`packages/builder`](packages/builder/): `.ubo` linter (`@adguard/aglint`) and subscription compiler writing to `dist/`.
+- [`packages/preview`](packages/preview/): isolated Firefox and uBlock Origin preview, headless 3-way capture, and README demo recorder.
+- [`filters/*`](filters/): per-host filter packages containing `filter.toml` and `.ubo` fragments.
+
+## Visual preview and capture
+
+Each host can declare `[preview]` in `filter.toml` with a `ci` flag and `[[preview.targets]]` entries (`url`, `label`, optional `ci`, and optional `wait_for` selector).
+`packages/preview` downloads and caches pinned Firefox, `geckodriver`, and uBlock Origin artifacts, verifies their SHA-256 checksums, and runs each session in a temporary profile.
+
+- **Interactive preview:** open a visible isolated Firefox window with a compiled variant loaded:
+
+  ```sh
+  mise exec -- bun run preview --host news.ycombinator.com
+  ```
+
+- **Headless 3-way capture:** capture `raw`, `base`, and `pr` screenshots and write `report.json` and `index.html` under `.artifacts/visual/`:
+
+  ```sh
+  mise exec -- bun run capture --host news.ycombinator.com
+  ```
+
+- **On-demand README demos:** capture a still PNG or animated WebP under `filters/<host>/assets/<variant>-<label>.<ext>` (requires local `ffmpeg` for `--format webp`):
+
+  ```sh
+  mise exec -- bun run demo --host news.ycombinator.com --format png
+  ```
+
 ## Subscription publishing
 
 The lists build locally today.

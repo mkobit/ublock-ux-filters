@@ -1,11 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseHostMeta } from "@ubdf/schema";
-import type { HostMeta, PreviewTargetMeta } from "@ubdf/schema";
 import { CANARY_RULE } from "./canary.ts";
 import { executePassForTargets, targetKey } from "./capture.ts";
 import type { CaptureRunnerDependencies, CaptureTargetSpec, PassOutcome } from "./capture.ts";
+import { defaultBuildFilters, loadPreviewConfig, resolveVariantName } from "./config.ts";
+import type { PreviewConfig } from "./config.ts";
+import {
+  DEFAULT_DEMO_FORMAT,
+  DEFAULT_DEMO_MAX_BYTES,
+  runDemo,
+} from "./demo.ts";
+import type { DemoCliArgs, DemoDependencies, DemoFormat } from "./demo.ts";
 import { selectCapturePlan } from "./diff-select.ts";
 import type { DiffSelectDependencies, PlannedCaptureTarget } from "./diff-select.ts";
 import { appendStepSummary, formatStepSummaryMarkdown, writeVisualReport } from "./report.ts";
@@ -15,24 +21,23 @@ import type { BrowserSession, PrepareSessionOptions } from "./session.ts";
 import { ensureToolchain } from "./toolchain.ts";
 import type { ToolchainPaths } from "./toolchain.ts";
 
+export { loadPreviewConfig, resolveVariantName };
+export type { PreviewConfig };
+
 const DEFAULT_ROOT_DIR = fileURLToPath(new URL("../../../", import.meta.url));
 const PREVIEW_USAGE =
   "Usage: preview --host <host> [--variant <variant>] [--keep-profile]";
 const CAPTURE_USAGE =
   "Usage: capture [--host <host>] [--variant <variant>] [--base-ref <sha>] [--ci] [--keep-profile]";
-const CLI_USAGE = `${PREVIEW_USAGE} | ${CAPTURE_USAGE}`;
+const DEMO_USAGE =
+  "Usage: demo --host <host> [--variant <variant>] [--label <target-label>] [--format png|webp] [--scroll-y <px>] [--hover <selector>] [--max-bytes <n>] [--keep-profile]";
+const CLI_USAGE = `${PREVIEW_USAGE} | ${CAPTURE_USAGE} | ${DEMO_USAGE}`;
 
 export interface PreviewCliArgs {
   command: "preview";
   host: string;
   variant?: string;
   keepProfile: boolean;
-}
-
-export interface PreviewConfig {
-  host: string;
-  variant: string;
-  targets: PreviewTargetMeta[];
 }
 
 export interface SpawnedBrowserProcess {
@@ -207,75 +212,110 @@ export function parseCaptureArgs(args: string[]): CaptureCliArgs {
   };
 }
 
-export function resolveVariantName(
-  hostMeta: HostMeta,
-  requestedVariant?: string,
-): string {
-  const available = Object.keys(hostMeta.variants);
-  if (requestedVariant !== undefined) {
-    if (!Object.hasOwn(hostMeta.variants, requestedVariant)) {
-      throw new Error(
-        `Unknown variant '${requestedVariant}' for host '${hostMeta.host}'. Available variants: ${available.join(", ")}`,
-      );
-    }
-    return requestedVariant;
+function parseNonNegativeInt(raw: string): number {
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(DEMO_USAGE);
   }
-
-  if (hostMeta.default_variant !== undefined) {
-    return hostMeta.default_variant;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(DEMO_USAGE);
   }
-
-  if (available.length === 1 && available[0] !== undefined) {
-    return available[0];
-  }
-
-  throw new Error(
-    `Host '${hostMeta.host}' has multiple variants (${available.join(", ")}) and no default_variant; pass --variant <variant>`,
-  );
+  return value;
 }
 
-export function loadPreviewConfig(
-  rootDir: string,
-  host: string,
-  requestedVariant?: string,
-): PreviewConfig {
-  const filterTomlPath = join(rootDir, "filters", host, "filter.toml");
-  if (!existsSync(filterTomlPath)) {
-    throw new Error(
-      `Host descriptor not found for '${host}' at ${filterTomlPath}`,
-    );
+export function parseDemoArgs(args: string[]): DemoCliArgs {
+  const [command, ...rest] = args;
+  if (command !== "demo") {
+    throw new Error(DEMO_USAGE);
   }
 
-  const parsedToml = Bun.TOML.parse(readFileSync(filterTomlPath, "utf8"));
-  const hostMeta = parseHostMeta(parsedToml, host);
-  const variant = resolveVariantName(hostMeta, requestedVariant);
+  let host: string | undefined;
+  let variant: string | undefined;
+  let label: string | undefined;
+  let format: DemoFormat | undefined;
+  let scrollY: number | undefined;
+  let hover: string | undefined;
+  let maxBytes: number | undefined;
+  let keepProfile = false;
 
-  if (!hostMeta.preview || hostMeta.preview.targets.length === 0) {
-    throw new Error(
-      `Host '${host}' does not declare [preview] targets in ${filterTomlPath}`,
-    );
+  for (let index = 0; index < rest.length; ) {
+    const token = rest[index];
+    if (token === undefined) {
+      break;
+    }
+
+    if (token === "--keep-profile") {
+      if (keepProfile) {
+        throw new Error(DEMO_USAGE);
+      }
+      keepProfile = true;
+      index += 1;
+      continue;
+    }
+
+    if (
+      token === "--host" ||
+      token === "--variant" ||
+      token === "--label" ||
+      token === "--format" ||
+      token === "--scroll-y" ||
+      token === "--hover" ||
+      token === "--max-bytes"
+    ) {
+      const value = rest[index + 1];
+      if (!value || value.startsWith("--")) {
+        throw new Error(DEMO_USAGE);
+      }
+      if (token === "--host") {
+        if (host !== undefined) throw new Error(DEMO_USAGE);
+        host = value;
+      } else if (token === "--variant") {
+        if (variant !== undefined) throw new Error(DEMO_USAGE);
+        variant = value;
+      } else if (token === "--label") {
+        if (label !== undefined) throw new Error(DEMO_USAGE);
+        label = value;
+      } else if (token === "--format") {
+        if (format !== undefined || (value !== "png" && value !== "webp")) {
+          throw new Error(DEMO_USAGE);
+        }
+        format = value;
+      } else if (token === "--scroll-y") {
+        if (scrollY !== undefined) throw new Error(DEMO_USAGE);
+        scrollY = parseNonNegativeInt(value);
+      } else if (token === "--hover") {
+        if (hover !== undefined) throw new Error(DEMO_USAGE);
+        hover = value;
+      } else {
+        if (maxBytes !== undefined) throw new Error(DEMO_USAGE);
+        const parsed = parseNonNegativeInt(value);
+        if (parsed <= 0) {
+          throw new Error(DEMO_USAGE);
+        }
+        maxBytes = parsed;
+      }
+      index += 2;
+      continue;
+    }
+
+    throw new Error(DEMO_USAGE);
+  }
+
+  if (host === undefined) {
+    throw new Error(DEMO_USAGE);
   }
 
   return {
+    command: "demo",
     host,
-    variant,
-    targets: hostMeta.preview.targets,
+    format: format ?? DEFAULT_DEMO_FORMAT,
+    scrollY: scrollY ?? 0,
+    maxBytes: maxBytes ?? DEFAULT_DEMO_MAX_BYTES,
+    keepProfile,
+    ...(variant !== undefined ? { variant } : {}),
+    ...(label !== undefined ? { label } : {}),
+    ...(hover !== undefined ? { hover } : {}),
   };
-}
-
-async function defaultBuildFilters(rootDir: string): Promise<void> {
-  const proc = Bun.spawn(
-    ["bun", "packages/builder/src/index.ts", "build"],
-    {
-      cwd: rootDir,
-      stdout: "inherit",
-      stderr: "inherit",
-    },
-  );
-  const exitCode = await proc.exited;
-  if (exitCode !== 0) {
-    throw new Error(`Filter build failed with exit code ${exitCode}`);
-  }
 }
 
 function defaultSpawnFirefox(
@@ -545,7 +585,7 @@ export async function runCapture(
 
 export async function runCli(
   argv: string[],
-  deps: PreviewDependencies & CaptureDependencies = {},
+  deps: PreviewDependencies & CaptureDependencies & DemoDependencies = {},
 ): Promise<void> {
   const command = argv[0];
   if (command === "preview") {
@@ -556,6 +596,11 @@ export async function runCli(
   if (command === "capture") {
     const parsed = parseCaptureArgs(argv);
     await runCapture(parsed, deps);
+    return;
+  }
+  if (command === "demo") {
+    const parsed = parseDemoArgs(argv);
+    await runDemo(parsed, deps);
     return;
   }
   throw new Error(CLI_USAGE);

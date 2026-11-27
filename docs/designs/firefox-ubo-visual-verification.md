@@ -136,7 +136,7 @@ Schema validation rules:
 `packages/preview` tracks one JSON manifest of pinned official binaries and their SHA-256 checksums:
 
 *   Firefox `153.7.0esr` (`linux-x86_64/en-US/firefox-153.7.0esr.tar.xz`, sha256 `7d2eb92ca3a7b2a83de092eb9b94c853980214de2fbfdccb2ac39d61c593c5a5`)
-*   `geckodriver` `v0.37.1` (`geckodriver-v0.37.1-linux64.tar.gz`, sha256 `e815130ea95983e162ae91843b48d3a3ce911735635fce83a647afde21e09f7e`)
+*   `geckodriver` `v0.37.1` (`geckodriver-v0.37.1-linux64.tar.gz`, sha256 `e815130ea95983e162ae91843b48d3a3ce991735635fce83a647afde21e09f7e`)
 *   uBlock Origin `1.77.0` (`uBlock0_1.77.0.firefox.signed.xpi`, sha256 `894ea48dedd26a637ab98ba627ae70b7ed94798eabfd4b089f5e5e73524a24eb`)
 
 The installer downloads missing archives into `~/.cache/ublock-ux-filters/browser/` (overridable via `UBOUF_CACHE_DIR`), verifies each archive's SHA-256 before extraction, and keeps the extracted Firefox directory read-only.
@@ -163,7 +163,7 @@ Every browser launch (`raw`, `base`, `PR`, `preview`, or `demo`) runs in a fresh
 Key isolation guarantees:
 
 *   **Per-run `policies.json`:** Firefox reads `distribution/policies.json` next to the `firefox` executable. Cloning the cached Firefox directory via hardlinks or copy-on-write reflinks into `<tmpDir>/firefox-bin/` lets each run generate its own `distribution/policies.json` without mutating the shared cache or blocking concurrent sessions.
-*   **Zero-click uBO setup:** `policies.json` installs the cached signed uBO XPI and sets `3rdparty.Extensions["uBlock0@raymondhill.net"].adminSettings` with `autoUpdate: false`, empty `selectedFilterLists` (disabling the ~15 MB default external downloads), and the target compiled ruleset injected via `userFilters` (or omitted for the `raw` pass).
+*   **Zero-click uBO setup:** `policies.json` installs the cached signed uBO XPI and sets `3rdparty.Extensions["uBlock0@raymondhill.net"].adminSettings` with `autoUpdate: false`, `selectedFilterLists: ["user-filters"]` (disabling the ~15 MB default external downloads while loading `userFilters`), and the target compiled ruleset injected via `userFilters` (or omitted for the `raw` pass).
 *   **Environment and profile isolation:** Child processes (`firefox` and `geckodriver`) receive a sanitized environment that strips `GITHUB_TOKEN`, `GH_TOKEN`, and cloud credential variables. Firefox always launches with `--no-remote -profile <tmpDir>/profile`.
 *   **Deterministic rendering:** `user.js` pins `ui.systemUsesDarkTheme = 0` (light OS baseline so dark-mode filters cannot pass by inheriting host dark mode), `intl.accept_languages = "en-US"`, fixed viewport (`1440x900`), and DPR (`1`).
 *   **Cleanup:** `SIGINT` and `SIGTERM` handlers terminate child processes and delete `<tmpDir>` unless `--keep-profile` is passed for local debugging.
@@ -365,7 +365,7 @@ Each phase leaves the repository buildable and passing its verification checkpoi
       "geckodriver": {
         "version": "0.37.1",
         "url": "https://github.com/mozilla/geckodriver/releases/download/v0.37.1/geckodriver-v0.37.1-linux64.tar.gz",
-        "sha256": "e815130ea95983e162ae91843b48d3a3ce911735635fce83a647afde21e09f7e"
+        "sha256": "e815130ea95983e162ae91843b48d3a3ce991735635fce83a647afde21e09f7e"
       },
       "ublockOrigin": {
         "version": "1.77.0",
@@ -399,7 +399,7 @@ Each phase leaves the repository buildable and passing its verification checkpoi
                 "uBlock0@raymondhill.net": {
                   "adminSettings": {
                     "userSettings": { "autoUpdate": false },
-                    "selectedFilterLists": [],
+                    "selectedFilterLists": ["user-filters"],
                     "userFilters": "<canaryRule + compiledFilterText>"
                   }
                 }

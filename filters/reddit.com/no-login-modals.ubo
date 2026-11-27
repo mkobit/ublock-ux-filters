@@ -1,0 +1,60 @@
+! Title: Reddit - remove unauthenticated login modals and friction overlays
+! Description: Hides unauthenticated login walls, sign-in nags, Google One Tap prompts, and app-upsell overlays on Reddit
+
+! ==========================================================================
+! 1. GOOGLE ONE TAP & THIRD-PARTY SIGN-IN PROMPTS
+! ==========================================================================
+||accounts.google.com/gsi/$3p,domain=reddit.com
+reddit.com###credential_picker_container
+reddit.com###credential_picker_iframe
+reddit.com##div[id^="credential_picker"]
+reddit.com##shreddit-async-loader[bundlename="google_one_tap"]
+reddit.com##[bundlename="google_one_tap"]
+
+! ==========================================================================
+! 2. SHREDDIT LOGIN MODALS, SIGN-UP DRAWERS & LOGGED-OUT NAGS
+! ==========================================================================
+reddit.com##shreddit-async-loader[bundlename="auth_flow_modal"]
+reddit.com##shreddit-async-loader[bundlename="login_prompt"]
+reddit.com##shreddit-async-loader[bundlename="auth_flow_login_prompt"]
+reddit.com##shreddit-async-loader[bundlename="signup_drawer"]
+reddit.com##shreddit-signup-drawer
+reddit.com##shreddit-async-loader[bundlename="logged_out_footer"]
+reddit.com##[bundlename="logged_out_footer"]
+reddit.com##.logged-out-cta
+reddit.com##div[data-testid="login-modal"]
+reddit.com##div[data-testid="signup-modal"]
+reddit.com##div[data-testid="auth-modal"]
+reddit.com##div[data-testid="onboarding-modal"]
+reddit.com##faceplate-dialog[open]:has(auth-flow-login)
+
+! ==========================================================================
+! 3. APP UPSELLS & USER-FRICTION OVERLAYS (XPROMO)
+! ==========================================================================
+reddit.com##xpromo-app-selector
+reddit.com##shreddit-async-loader[bundlename="xpromo_app_selector"]
+reddit.com##xpromo-nsfw-blocking-modal
+reddit.com##xpromo-nsfw-bypassable-modal
+reddit.com##xpromo-nsfw-blocking-container
+reddit.com##shreddit-async-loader[bundlename="xpromo_nsfw_blocking_modal"]
+reddit.com##shreddit-async-loader[bundlename="xpromo_nsfw_bypassable_modal"]
+reddit.com##shreddit-async-loader[bundlename="bottom_bar_xpromo"]
+reddit.com##shreddit-async-loader[bundlename="xpromo_banner"]
+reddit.com##div[data-testid="xpromo-modal"]
+reddit.com##div[data-testid="app-upsell-banner"]
+reddit.com##.XPromoPopup
+reddit.com##.XPromoPill
+
+! ==========================================================================
+! 4. OLD REDDIT SIGN-UP & REDIRECT NAGS
+! ==========================================================================
+old.reddit.com##.listingsignupbar
+old.reddit.com##.infobar.newsletterbar
+old.reddit.com##.redesign-beta-optin
+old.reddit.com##.mobile-web-redirect-bar
+
+! ==========================================================================
+! 5. SCROLL-LOCK RECOVERY WHEN MODALS ARE HIDDEN
+! ==========================================================================
+reddit.com##html.scroll-disabled, body.scroll-disabled:style(overflow: auto !important;)
+reddit.com##html[style*="overflow: hidden"], body[style*="overflow: hidden"]:style(overflow: auto !important;)

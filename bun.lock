@@ -15,6 +15,9 @@
     "filters/news.ycombinator.com": {
       "name": "@ublock-ux-filters/news.ycombinator.com",
     },
+    "filters/reddit.com": {
+      "name": "@ublock-ux-filters/reddit.com",
+    },
     "packages/builder": {
       "name": "@ubdf/builder",
       "dependencies": {
@@ -154,6 +157,8 @@
     "@ublock-ux-filters/ebay.com": ["@ublock-ux-filters/ebay.com@workspace:filters/ebay.com"],
 
     "@ublock-ux-filters/news.ycombinator.com": ["@ublock-ux-filters/news.ycombinator.com@workspace:filters/news.ycombinator.com"],
+
+    "@ublock-ux-filters/reddit.com": ["@ublock-ux-filters/reddit.com@workspace:filters/reddit.com"],
 
     "@valibot/to-json-schema": ["@valibot/to-json-schema@1.8.0", "", { "peerDependencies": { "valibot": "^1.5.0" } }, "sha512-a0M+uwCuQZEPAo65NYkFSJ14O5c213KoSZmPdoCfuFvUhfULi4T2Z6Tpjv6lTVMW9RoLm74RpRAjNEa43KcN+g=="],
 

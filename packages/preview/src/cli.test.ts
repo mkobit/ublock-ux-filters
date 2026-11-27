@@ -1,16 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HostMeta } from "@ubdf/schema";
+import { CaptureFailureError } from "./webdriver.ts";
 import {
   loadPreviewConfig,
+  parseCaptureArgs,
   parsePreviewArgs,
   resolveVariantName,
+  runCapture,
   runCli,
   runPreview,
 } from "./cli.ts";
-import type { PreviewDependencies } from "./cli.ts";
+import type { CaptureDependencies, PreviewDependencies } from "./cli.ts";
 import type { BrowserSession, PrepareSessionOptions } from "./session.ts";
 
 const tempDirs: string[] = [];
@@ -373,5 +376,217 @@ label = "two"
       runPreview({ command: "preview", host: "example.com", keepProfile: false }, deps),
     ).rejects.toThrow(/Compiled filter not found/);
     expect(toolchainCalled).toBe(false);
+  });
+});
+
+describe("parseCaptureArgs", () => {
+  test("parses capture with no optional flags", () => {
+    expect(parseCaptureArgs(["capture"])).toEqual({
+      command: "capture",
+      ci: false,
+      keepProfile: false,
+    });
+  });
+
+  test("parses all capture flags", () => {
+    expect(
+      parseCaptureArgs([
+        "capture",
+        "--ci",
+        "--keep-profile",
+        "--host",
+        "news.ycombinator.com",
+        "--variant",
+        "dark-mode-github-dark",
+        "--base-ref",
+        "origin/main",
+      ]),
+    ).toEqual({
+      command: "capture",
+      host: "news.ycombinator.com",
+      variant: "dark-mode-github-dark",
+      baseRef: "origin/main",
+      ci: true,
+      keepProfile: true,
+    });
+  });
+
+  test("rejects --variant without --host, duplicate flags, and unknown flags", () => {
+    expect(() => parseCaptureArgs(["capture", "--variant", "dark"])).toThrow(/Usage: capture/);
+    expect(() => parseCaptureArgs(["capture", "--ci", "--ci"])).toThrow(/Usage: capture/);
+    expect(() => parseCaptureArgs(["capture", "--base-ref"])).toThrow(/Usage: capture/);
+    expect(() => parseCaptureArgs(["capture", "--unknown"])).toThrow(/Usage: capture/);
+  });
+});
+
+describe("runCapture", () => {
+  function setupCaptureFixture(rootDir: string, compiledText: string): void {
+    const hostDir = join(rootDir, "filters", "example.com");
+    mkdirSync(hostDir, { recursive: true });
+    writeFileSync(
+      join(hostDir, "filter.toml"),
+      `host = "example.com"
+display_name = "Example"
+allowed_domains = ["example.com"]
+
+[variants.dark]
+file = "dark.ubo"
+description = "Dark"
+tags = []
+
+[preview]
+ci = true
+
+[[preview.targets]]
+url = "https://example.com/"
+label = "home"
+wait_for = "#main"
+`,
+      "utf8",
+    );
+    const rawDir = join(rootDir, "dist", "raw", "example.com");
+    mkdirSync(rawDir, { recursive: true });
+    writeFileSync(join(rawDir, "dark.txt"), compiledText, "utf8");
+  }
+
+  function makeFakeSession(): BrowserSession {
+    return {
+      tmpDir: "/tmp/ubouf-capture-test",
+      firefoxBinDir: "/tmp/ubouf-capture-test/firefox-bin",
+      firefoxBin: "/tmp/ubouf-capture-test/firefox-bin/firefox",
+      profileDir: "/tmp/ubouf-capture-test/profile",
+      env: {},
+      keepProfile: false,
+      trackChild: () => {},
+      cleanup: () => {},
+    };
+  }
+
+  test("runs 3-way capture, writes report.json, index.html, PNGs, and step summary", async () => {
+    const headRoot = createTempWorkspace();
+    const baseRoot = createTempWorkspace();
+    setupCaptureFixture(headRoot, "example.com##body:style(color: #fff)\n");
+    setupCaptureFixture(baseRoot, "example.com##body:style(color: #eee)\n");
+
+    const outDir = join(headRoot, ".artifacts", "visual");
+    const summaryPath = join(headRoot, "step-summary.md");
+    const modesSeen: string[] = [];
+
+    const deps: CaptureDependencies = {
+      rootDir: headRoot,
+      outDir,
+      stepSummaryPath: summaryPath,
+      now: () => new Date("2026-11-27T12:00:00.000Z"),
+      getChangedFiles: async () => ["filters/example.com/dark.ubo"],
+      buildFilters: async () => {},
+      prepareBaseCheckout: async () => ({
+        baseRootDir: baseRoot,
+        baseDistDir: join(baseRoot, "dist"),
+        cleanup: () => {},
+      }),
+      ensureToolchain: async () => ({
+        firefoxDir: "/cache/firefox",
+        geckodriverBin: "/cache/geckodriver",
+        uboXpiPath: "/cache/ubo.xpi",
+      }),
+      prepareSession: (opts) => {
+        modesSeen.push(opts.mode);
+        return makeFakeSession();
+      },
+      verifyCanary: async () => ({ canaryMs: 120, observedColor: "rgb(255, 0, 128)" }),
+      launchWebDriver: async () => ({
+        navigate: async () => {},
+        getCurrentUrl: async () => "https://example.com/",
+        getTitle: async () => "Example",
+        getHttpStatus: async () => 200,
+        executeScript: (async () => "Example content") as <T>() => Promise<T>,
+        waitForSelector: async () => {},
+        takeScreenshot: async () => new Uint8Array([137, 80, 78, 71]),
+        close: async () => {},
+      }),
+      sleep: async () => {},
+    };
+
+    const report = await runCapture(
+      { command: "capture", baseRef: "main", ci: true, keepProfile: false },
+      deps,
+    );
+
+    expect(modesSeen).toEqual(["raw", "filtered", "filtered"]);
+    expect(report.results).toEqual([
+      {
+        host: "example.com",
+        variant: "dark",
+        label: "home",
+        url: "https://example.com/",
+        status: "captured",
+        panels: {
+          raw: "example.com/dark/home/raw.png",
+          base: "example.com/dark/home/base.png",
+          pr: "example.com/dark/home/pr.png",
+        },
+      },
+    ]);
+    expect(existsSync(join(outDir, "report.json"))).toBe(true);
+    expect(existsSync(join(outDir, "index.html"))).toBe(true);
+    expect(existsSync(join(outDir, "example.com", "dark", "home", "raw.png"))).toBe(true);
+    expect(existsSync(join(outDir, "example.com", "dark", "home", "base.png"))).toBe(true);
+    expect(existsSync(join(outDir, "example.com", "dark", "home", "pr.png"))).toBe(true);
+    expect(readFileSync(summaryPath, "utf8")).toContain("| example.com | dark | home | captured | raw, base, pr | OK |");
+  });
+
+  test("records UBO_LOAD_ERROR, writes report, and exits non-zero", async () => {
+    const headRoot = createTempWorkspace();
+    setupCaptureFixture(headRoot, "example.com##body\n");
+    const outDir = join(headRoot, ".artifacts", "visual");
+
+    let currentMode = "";
+    let navigatedInFilteredPass = false;
+    const deps: CaptureDependencies = {
+      rootDir: headRoot,
+      outDir,
+      buildFilters: async () => {},
+      ensureToolchain: async () => ({
+        firefoxDir: "/cache/firefox",
+        geckodriverBin: "/cache/geckodriver",
+        uboXpiPath: "/cache/ubo.xpi",
+      }),
+      prepareSession: (opts) => {
+        currentMode = opts.mode;
+        return makeFakeSession();
+      },
+      verifyCanary: async () => {
+        throw new CaptureFailureError({
+          kind: "UBO_LOAD_ERROR",
+          message: "Canary failed",
+          finalUrl: "http://127.0.0.1:1234/canary",
+          httpStatus: 200,
+          retryCount: 0,
+          phaseTimingsMs: { canaryMs: 10000, navigateMs: 10000 },
+        });
+      },
+      launchWebDriver: async () => ({
+        navigate: async (url) => {
+          if (currentMode === "filtered" && url.startsWith("https://")) {
+            navigatedInFilteredPass = true;
+          }
+        },
+        getCurrentUrl: async () => "https://example.com/",
+        getTitle: async () => "Example",
+        getHttpStatus: async () => 200,
+        executeScript: (async () => "") as <T>() => Promise<T>,
+        waitForSelector: async () => {},
+        takeScreenshot: async () => new Uint8Array([1, 2, 3]),
+        close: async () => {},
+      }),
+      sleep: async () => {},
+    };
+
+    await expect(
+      runCli(["capture", "--host", "example.com", "--ci"], deps),
+    ).rejects.toThrow(/Visual capture failed for 1 target/);
+    expect(navigatedInFilteredPass).toBe(false);
+    expect(existsSync(join(outDir, "report.json"))).toBe(true);
+    expect(existsSync(join(outDir, "index.html"))).toBe(true);
   });
 });

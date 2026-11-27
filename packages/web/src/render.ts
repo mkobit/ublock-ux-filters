@@ -615,6 +615,15 @@ export function renderAppJs(): string {
     const tagButtons = Array.from(document.querySelectorAll(".tag-filter"));
     let activeTag = "";
 
+    function setActiveTagButton(targetButton) {
+      activeTag = targetButton ? targetButton.getAttribute("data-tag") || "" : "";
+      for (const candidate of tagButtons) {
+        const isCurrent = candidate === targetButton;
+        candidate.classList.toggle("is-active", isCurrent);
+        candidate.setAttribute("aria-pressed", isCurrent ? "true" : "false");
+      }
+    }
+
     function applyFilter() {
       const query = searchInput ? searchInput.value.trim().toLowerCase() : "";
       let visible = 0;
@@ -633,21 +642,65 @@ export function renderAppJs(): string {
       }
     }
 
+    function syncUrl() {
+      if (
+        window.location.protocol === "file:" ||
+        !window.history ||
+        typeof window.history.replaceState !== "function"
+      ) {
+        return;
+      }
+      const params = new URLSearchParams(window.location.search || "");
+      const query = searchInput ? searchInput.value.trim() : "";
+      if (query) {
+        params.set("q", query);
+      } else {
+        params.delete("q");
+      }
+      if (activeTag) {
+        params.set("tag", activeTag);
+      } else {
+        params.delete("tag");
+      }
+      const search = params.toString();
+      const pathname = window.location.pathname || "/";
+      const hash = window.location.hash || "";
+      const nextUrl = pathname + (search ? "?" + search : "") + hash;
+      window.history.replaceState(null, "", nextUrl);
+    }
+
+    function applyFromUrl() {
+      const params = new URLSearchParams(window.location.search || "");
+      if (searchInput) {
+        const q = params.get("q");
+        searchInput.value = q !== null ? q : "";
+      }
+      const tagParam = params.get("tag") || "";
+      const matched = tagParam
+        ? tagButtons.find((button) => button.getAttribute("data-tag") === tagParam) || null
+        : null;
+      const fallback = tagButtons.find((button) => (button.getAttribute("data-tag") || "") === "") || null;
+      setActiveTagButton(matched || fallback);
+      applyFilter();
+    }
+
     if (searchInput) {
-      searchInput.addEventListener("input", applyFilter);
+      searchInput.addEventListener("input", () => {
+        applyFilter();
+        syncUrl();
+      });
     }
 
     for (const button of tagButtons) {
       button.addEventListener("click", () => {
-        activeTag = button.getAttribute("data-tag") || "";
-        for (const candidate of tagButtons) {
-          const isCurrent = candidate === button;
-          candidate.classList.toggle("is-active", isCurrent);
-          candidate.setAttribute("aria-pressed", isCurrent ? "true" : "false");
-        }
+        setActiveTagButton(button);
         applyFilter();
+        syncUrl();
       });
     }
+
+    applyFromUrl();
+    window.addEventListener("popstate", applyFromUrl);
   }
 
   updateSubscribeLinks();

@@ -3,6 +3,12 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { parseHostMeta } from "@ubdf/schema";
 import type { HostMeta } from "@ubdf/schema";
+import {
+  compiledFilterPath,
+  getTransitiveVariantIds,
+  loadComposedVariantRules,
+  tryLoadComposedVariantRules,
+} from "./filters.ts";
 
 const SHARED_BUILD_EXACT_FILES = new Set(["package.json", "bun.lock"]);
 const SHARED_BUILD_PREFIXES = ["packages/builder/", "packages/schema/"];
@@ -156,17 +162,6 @@ function listHostDirs(rootDir: string): string[] {
   return hosts.sort();
 }
 
-function compiledFilterPath(distDir: string, host: string, variant: string): string {
-  return join(distDir, "raw", host, `${variant}.txt`);
-}
-
-function readTextIfExists(filePath: string): string | undefined {
-  if (!existsSync(filePath)) {
-    return undefined;
-  }
-  return readFileSync(filePath, "utf8");
-}
-
 async function runCheckedCommand(cmd: string[], cwd: string, description: string): Promise<string> {
   const proc = Bun.spawn(cmd, {
     cwd,
@@ -211,7 +206,7 @@ async function defaultPrepareBaseCheckout(
 ): Promise<BaseCheckout> {
   const tmpParent = mkdtempSync(join(tmpdir(), "ubouf-base-"));
   const worktreeDir = join(tmpParent, "worktree");
-  const baseDistDir = join(tmpParent, "dist");
+  const baseDistDir = join(worktreeDir, "dist");
 
   const cleanupWorktree = (): void => {
     if (existsSync(worktreeDir)) {
@@ -265,13 +260,13 @@ function addTargetPlansForVariant(
   }
 
   const prFilterPath = compiledFilterPath(prDistDir, hostMeta.host, variant);
-  if (!existsSync(prFilterPath)) {
-    throw new Error(`Compiled filter not found at ${prFilterPath} after build`);
-  }
+  loadComposedVariantRules(prDistDir, hostMeta.host, variant);
 
   const candidateBasePath =
     baseDistDir !== undefined ? compiledFilterPath(baseDistDir, hostMeta.host, variant) : undefined;
-  const hasBase = candidateBasePath !== undefined && existsSync(candidateBasePath);
+  const hasBase =
+    baseDistDir !== undefined &&
+    tryLoadComposedVariantRules(baseDistDir, hostMeta.host, variant) !== undefined;
 
   for (const target of preview.targets) {
     if (ci && !isTargetEnabledForCi(preview.ci, target.ci)) {
@@ -385,14 +380,21 @@ export async function selectCapturePlan(
       candidateHosts.add(tomlHost);
     }
 
+    const headMetaCache = new Map<string, HostMeta | undefined>();
+    const getHeadHostMeta = (hostName: string): HostMeta | undefined => {
+      if (!headMetaCache.has(hostName)) {
+        headMetaCache.set(hostName, loadHostMetaIfExists(rootDir, hostName));
+      }
+      return headMetaCache.get(hostName);
+    };
+
     const hostsToCheck =
       host !== undefined ? [host] : Array.from(candidateHosts).sort();
 
     for (const currentHost of hostsToCheck) {
-      const headMeta = loadHostMetaIfExists(rootDir, currentHost);
+      const headMeta = getHeadHostMeta(currentHost);
       const baseMeta = loadHostMetaIfExists(baseCheckout.baseRootDir, currentHost);
       const tomlChanged = diff.changedTomlHosts.has(currentHost);
-      const changedUbos = diff.changedUboFilesByHost.get(currentHost);
 
       if (headMeta?.preview) {
         const variantNames =
@@ -404,12 +406,29 @@ export async function selectCapturePlan(
             continue;
           }
 
-          const prText = readTextIfExists(compiledFilterPath(prDistDir, currentHost, currentVariant));
-          const baseText = readTextIfExists(
-            compiledFilterPath(baseCheckout.baseDistDir, currentHost, currentVariant),
+          const prText = tryLoadComposedVariantRules(prDistDir, currentHost, currentVariant);
+          const baseText = tryLoadComposedVariantRules(
+            baseCheckout.baseDistDir,
+            currentHost,
+            currentVariant,
           );
           const compiledChanged = prText !== baseText;
-          const uboChanged = changedUbos?.has(variantMeta.file) ?? false;
+          const transitiveIds = getTransitiveVariantIds(
+            prDistDir,
+            currentHost,
+            currentVariant,
+            getHeadHostMeta,
+          );
+          const uboChanged = transitiveIds.some((id) => {
+            const sepIdx = id.indexOf("::");
+            if (sepIdx <= 0) {
+              return false;
+            }
+            const depHost = id.slice(0, sepIdx);
+            const depVariant = id.slice(sepIdx + 2);
+            const depFile = getHeadHostMeta(depHost)?.variants[depVariant]?.file;
+            return depFile !== undefined && (diff.changedUboFilesByHost.get(depHost)?.has(depFile) ?? false);
+          });
           const isAffected =
             tomlChanged ||
             uboChanged ||

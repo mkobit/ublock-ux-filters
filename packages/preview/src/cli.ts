@@ -14,6 +14,7 @@ import {
 import type { DemoCliArgs, DemoDependencies, DemoFormat } from "./demo.ts";
 import { selectCapturePlan } from "./diff-select.ts";
 import type { DiffSelectDependencies, PlannedCaptureTarget } from "./diff-select.ts";
+import { loadComposedVariantRules, loadFilterTextForCapture } from "./filters.ts";
 import { appendStepSummary, formatStepSummaryMarkdown, writeVisualReport } from "./report.ts";
 import type { TargetResult, VisualReport } from "./report.ts";
 import { prepareSession } from "./session.ts";
@@ -344,19 +345,11 @@ export async function runPreview(
 
   await buildFilters(rootDir);
 
-  const filterFilePath = join(
-    rootDir,
-    "dist",
-    "raw",
+  const userFilters = loadComposedVariantRules(
+    join(rootDir, "dist"),
     config.host,
-    `${config.variant}.txt`,
+    config.variant,
   );
-  if (!existsSync(filterFilePath)) {
-    throw new Error(
-      `Compiled filter not found at ${filterFilePath} after build`,
-    );
-  }
-  const userFilters = readFileSync(filterFilePath, "utf8");
 
   const toolchain = await getToolchain();
   const session = createSession({
@@ -464,7 +457,11 @@ export async function runCapture(
         if (!first?.baseFilterPath) {
           continue;
         }
-        const baseFilterText = readFileSync(first.baseFilterPath, "utf8");
+        const baseFilterText = loadFilterTextForCapture(
+          first.baseFilterPath,
+          first.host,
+          first.variant,
+        );
         const groupResults = await executePassForTargets(
           {
             pass: "base",
@@ -486,7 +483,11 @@ export async function runCapture(
         if (!first) {
           continue;
         }
-        const prFilterText = readFileSync(first.prFilterPath, "utf8");
+        const prFilterText = loadFilterTextForCapture(
+          first.prFilterPath,
+          first.host,
+          first.variant,
+        );
         const groupResults = await executePassForTargets(
           {
             pass: "pr",

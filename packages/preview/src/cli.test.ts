@@ -2,6 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { compileWorkspace } from "@ubdf/builder/compiler";
+import type { FilterParserAdapter } from "@ubdf/builder/compiler";
+import { CANARY_RULE } from "./canary.ts";
 import type { HostMeta } from "@ubdf/schema";
 import { CaptureFailureError } from "./webdriver.ts";
 import {
@@ -588,5 +591,205 @@ wait_for = "#main"
     expect(navigatedInFilteredPass).toBe(false);
     expect(existsSync(join(outDir, "report.json"))).toBe(true);
     expect(existsSync(join(outDir, "index.html"))).toBe(true);
+  });
+});
+
+describe("included rules composition in preview and capture", () => {
+  const testAdapter: FilterParserAdapter = {
+    async lint(filePath, content) {
+      const ruleCount = content
+        .split("\n")
+        .filter((line) => line.trim() !== "" && !line.startsWith("!") && !line.startsWith("["))
+        .length;
+      return { filePath, ruleCount, errors: [] };
+    },
+  };
+
+  function writeMultiHostWorkspace(rootDir: string, sharedRule: string, appRule: string): void {
+    const sharedDir = join(rootDir, "filters", "shared.example");
+    mkdirSync(sharedDir, { recursive: true });
+    writeFileSync(
+      join(sharedDir, "filter.toml"),
+      `host = "shared.example"
+display_name = "Shared"
+allowed_domains = ["shared.example"]
+
+[variants.base]
+file = "base.ubo"
+description = "Shared base rules"
+tags = []
+`,
+      "utf8",
+    );
+    writeFileSync(
+      join(sharedDir, "base.ubo"),
+      `[Adblock Plus 2.0]\n! Title: Shared\n${sharedRule}\n`,
+      "utf8",
+    );
+
+    const appDir = join(rootDir, "filters", "app.example");
+    mkdirSync(appDir, { recursive: true });
+    writeFileSync(
+      join(appDir, "filter.toml"),
+      `host = "app.example"
+display_name = "App"
+allowed_domains = ["app.example"]
+
+[variants.dark]
+file = "dark.ubo"
+description = "App dark"
+tags = []
+includes = ["shared.example::base"]
+
+[preview]
+ci = true
+
+[[preview.targets]]
+url = "https://app.example/"
+label = "home"
+`,
+      "utf8",
+    );
+    writeFileSync(
+      join(appDir, "dark.ubo"),
+      `! Title: App Dark\n${appRule}\n`,
+      "utf8",
+    );
+
+    const setsDir = join(rootDir, "sets");
+    mkdirSync(setsDir, { recursive: true });
+    writeFileSync(
+      join(setsDir, "app.toml"),
+      `name = "app"
+description = "App subscription"
+mode = "explicit"
+include = ["app.example::dark"]
+`,
+      "utf8",
+    );
+  }
+
+  test("runPreview loads included rules from another host in subscription composition order", async () => {
+    const rootDir = createTempWorkspace();
+    writeMultiHostWorkspace(rootDir, "shared.example##.shared-banner", "app.example##body:style(color: #fff)");
+
+    let capturedUserFilters: string | undefined;
+    const deps: PreviewDependencies = {
+      rootDir,
+      buildFilters: async (dir) => {
+        await compileWorkspace(
+          {
+            rootDir: dir,
+            outDir: "dist",
+            gitSha: "test-sha",
+            homepageUrl: "https://example.org",
+          },
+          testAdapter,
+        );
+      },
+      ensureToolchain: async () => ({
+        firefoxDir: "/cache/firefox",
+        geckodriverBin: "/cache/geckodriver",
+        uboXpiPath: "/cache/ubo.xpi",
+      }),
+      prepareSession: (options) => {
+        capturedUserFilters = options.userFilters;
+        return {
+          tmpDir: "/tmp/s",
+          firefoxBinDir: "/tmp/s/firefox-bin",
+          firefoxBin: "/tmp/s/firefox-bin/firefox",
+          profileDir: "/tmp/s/profile",
+          env: {},
+          keepProfile: false,
+          trackChild: () => {},
+          cleanup: () => {},
+        };
+      },
+      spawnFirefox: () => ({
+        exited: Promise.resolve(0),
+        kill: () => {},
+      }),
+    };
+
+    await runPreview({ command: "preview", host: "app.example", variant: "dark", keepProfile: false }, deps);
+
+    const setContent = readFileSync(join(rootDir, "dist", "sets", "app.txt"), "utf8");
+    const setBody = setContent.slice(setContent.indexOf("\n\n") + 2);
+    expect(capturedUserFilters).toBe("shared.example##.shared-banner\napp.example##body:style(color: #fff)\n");
+    expect(capturedUserFilters).toBe(setBody);
+  });
+
+  test("runCapture loads included rules in subscription composition order for base and pr passes", async () => {
+    const headRoot = createTempWorkspace();
+    const baseRoot = createTempWorkspace();
+    writeMultiHostWorkspace(headRoot, "shared.example##.shared-v2", "app.example##body:style(color: #fff)");
+    writeMultiHostWorkspace(baseRoot, "shared.example##.shared-v1", "app.example##body:style(color: #fff)");
+
+    await compileWorkspace(
+      { rootDir: headRoot, outDir: "dist", gitSha: "head", homepageUrl: "https://example.org" },
+      testAdapter,
+    );
+    await compileWorkspace(
+      { rootDir: baseRoot, outDir: "dist", gitSha: "base", homepageUrl: "https://example.org" },
+      testAdapter,
+    );
+
+    const userFiltersByMode: Array<{ mode: string; userFilters?: string }> = [];
+    const deps: CaptureDependencies = {
+      rootDir: headRoot,
+      outDir: join(headRoot, ".artifacts", "visual"),
+      getChangedFiles: async () => ["filters/shared.example/base.ubo"],
+      buildFilters: async () => {},
+      prepareBaseCheckout: async () => ({
+        baseRootDir: baseRoot,
+        baseDistDir: join(baseRoot, "dist"),
+        cleanup: () => {},
+      }),
+      ensureToolchain: async () => ({
+        firefoxDir: "/cache/firefox",
+        geckodriverBin: "/cache/geckodriver",
+        uboXpiPath: "/cache/ubo.xpi",
+      }),
+      prepareSession: (opts) => {
+        userFiltersByMode.push({
+          mode: opts.mode,
+          ...(opts.userFilters !== undefined ? { userFilters: opts.userFilters } : {}),
+        });
+        return {
+          tmpDir: "/tmp/ubouf-capture-test",
+          firefoxBinDir: "/tmp/ubouf-capture-test/firefox-bin",
+          firefoxBin: "/tmp/ubouf-capture-test/firefox-bin/firefox",
+          profileDir: "/tmp/ubouf-capture-test/profile",
+          env: {},
+          keepProfile: false,
+          trackChild: () => {},
+          cleanup: () => {},
+        };
+      },
+      verifyCanary: async () => ({ canaryMs: 100, observedColor: "rgb(255, 0, 128)" }),
+      launchWebDriver: async () => ({
+        navigate: async () => {},
+        getCurrentUrl: async () => "https://app.example/",
+        getTitle: async () => "App",
+        getHttpStatus: async () => 200,
+        executeScript: (async () => "") as <T>() => Promise<T>,
+        waitForSelector: async () => {},
+        takeScreenshot: async () => new Uint8Array([1, 2, 3]),
+        close: async () => {},
+      }),
+    };
+
+    await runCli(["capture", "--base-ref", "main", "--ci"], deps);
+
+    const baseSetContent = readFileSync(join(baseRoot, "dist", "sets", "app.txt"), "utf8");
+    const baseSetBody = baseSetContent.slice(baseSetContent.indexOf("\n\n") + 2);
+    const prSetContent = readFileSync(join(headRoot, "dist", "sets", "app.txt"), "utf8");
+    const prSetBody = prSetContent.slice(prSetContent.indexOf("\n\n") + 2);
+
+    expect(userFiltersByMode).toEqual([
+      { mode: "raw" },
+      { mode: "filtered", userFilters: `${CANARY_RULE}\n${baseSetBody}` },
+      { mode: "filtered", userFilters: `${CANARY_RULE}\n${prSetBody}` },
+    ]);
   });
 });

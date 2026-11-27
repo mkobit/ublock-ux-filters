@@ -127,7 +127,7 @@ function renderVariantCard(item: VariantCatalogItem, baseUrl?: string): string {
   const defaultBadge = isDefault ? `<span class="badge badge-accent">Default</span>` : "";
 
   return [
-    `<article class="card variant-card" data-host="${escapeHtml(entry.host)}" data-variant="${escapeHtml(entry.variant)}" data-tags="${escapeHtml(entry.tags.join(","))}" data-search="${escapeHtml(searchBlob)}">`,
+    `<article class="card variant-card" data-entry-id="${escapeHtml(entry.id)}" data-host="${escapeHtml(entry.host)}" data-variant="${escapeHtml(entry.variant)}" data-tags="${escapeHtml(entry.tags.join(","))}" data-search="${escapeHtml(searchBlob)}">`,
     `  <div class="card-header">`,
     `    <div>`,
     `      <h3>${escapeHtml(displayName)}</h3>`,
@@ -138,6 +138,10 @@ function renderVariantCard(item: VariantCatalogItem, baseUrl?: string): string {
     `  <p class="card-description">${escapeHtml(entry.description)}</p>`,
     entry.tags.length > 0 ? `  <div class="tag-list">${tagsHtml}</div>` : "",
     renderAssetGallery(assets, displayName),
+    `  <label class="custom-select">`,
+    `    <input type="checkbox" class="custom-select-checkbox" data-entry-id="${escapeHtml(entry.id)}">`,
+    `    <span>Include in custom list</span>`,
+    `  </label>`,
     `  <div class="card-actions">`,
     `    <a class="button button-primary" href="${escapeHtml(subscribeHref)}" data-subscribe-path="${escapeHtml(entry.fragmentPath)}" data-subscribe-title="${escapeHtml(title)}">Subscribe</a>`,
     `    <a class="button button-secondary" href="${escapeHtml(entry.fragmentPath)}">Raw rules</a>`,
@@ -210,6 +214,18 @@ export function renderHtml(input: RenderCatalogInput): string {
           ${tagButtons}
         </div>
         <p id="catalog-count" class="catalog-count" aria-live="polite">Showing ${variants.length} of ${variants.length} filters</p>
+      </div>
+      <div id="custom-list-bar" class="custom-list-bar" role="region" aria-label="Custom filter list">
+        <div class="custom-list-summary">
+          <h3 class="custom-list-title">Custom filter list</h3>
+          <p id="custom-selected-count" class="custom-selected-count" aria-live="polite">0 selected</p>
+        </div>
+        <div class="custom-list-actions">
+          <button type="button" id="custom-copy-rules" class="button button-primary" disabled>Copy rules for My filters</button>
+          <a id="custom-subscribe-link" class="button button-secondary is-disabled" href="${escapeHtml(buildSubscribeHref("custom.txt", "uBlock UX filters: custom", baseUrl))}" aria-disabled="true" tabindex="-1">Subscribe to custom list</a>
+          <button type="button" id="custom-copy-url" class="button button-secondary" disabled>Copy custom URL</button>
+          <button type="button" id="custom-clear" class="button button-secondary" disabled>Clear selection</button>
+        </div>
       </div>
       <div class="grid variants-grid" id="catalog-grid">
         ${variantsHtml}
@@ -418,6 +434,71 @@ section h2 {
   color: var(--text);
 }
 
+.button:disabled,
+.button.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.button.is-disabled {
+  pointer-events: none;
+}
+
+.custom-list-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background-color: var(--surface);
+}
+
+.custom-list-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.custom-list-title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.custom-selected-count {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.custom-list-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.custom-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+
+.custom-select-checkbox {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
 .catalog-controls {
   display: grid;
   gap: 0.75rem;
@@ -613,7 +694,106 @@ export function renderAppJs(): string {
     const countNode = document.getElementById("catalog-count");
     const cards = Array.from(document.querySelectorAll(".variant-card"));
     const tagButtons = Array.from(document.querySelectorAll(".tag-filter"));
+    const checkboxes = Array.from(document.querySelectorAll(".custom-select-checkbox"));
+    const selectedCountNode = document.getElementById("custom-selected-count");
+    const copyRulesButton = document.getElementById("custom-copy-rules");
+    const subscribeLink = document.getElementById("custom-subscribe-link");
+    const copyUrlButton = document.getElementById("custom-copy-url");
+    const clearButton = document.getElementById("custom-clear");
+    const status = document.getElementById("copy-status");
+    const cardById = new Map();
+    for (const card of cards) {
+      const entryId = card.getAttribute("data-entry-id");
+      if (entryId) {
+        cardById.set(entryId, card);
+      }
+    }
     let activeTag = "";
+
+    function getSelectedIds() {
+      const ids = [];
+      for (const checkbox of checkboxes) {
+        if (!checkbox.checked) continue;
+        const entryId = checkbox.getAttribute("data-entry-id");
+        if (entryId) {
+          ids.push(entryId);
+        }
+      }
+      ids.sort((left, right) => left.localeCompare(right));
+      return ids;
+    }
+
+    function buildCustomPath(selectedIds) {
+      if (selectedIds.length === 0) {
+        return "custom.txt";
+      }
+      return "custom.txt?include=" + selectedIds.join(",");
+    }
+
+    function stripHeaderLines(rulesText) {
+      const lines = rulesText.replace(/\\r\\n/g, "\\n").split("\\n");
+      let start = 0;
+      while (start < lines.length) {
+        const trimmed = lines[start].trim();
+        if (trimmed === "" || trimmed.startsWith("!")) {
+          start += 1;
+        } else {
+          break;
+        }
+      }
+      while (lines.length > start && lines[lines.length - 1].trim() === "") {
+        lines.pop();
+      }
+      return lines.slice(start).join("\\n");
+    }
+
+    function buildCombinedRules(selectedIds) {
+      const sections = ["! Title: ublock-ux-filters (custom)"];
+      for (const entryId of selectedIds) {
+        const card = cardById.get(entryId);
+        if (!card || typeof card.querySelector !== "function") continue;
+        const codeNode = card.querySelector("pre code");
+        const raw = codeNode ? codeNode.textContent || "" : "";
+        const body = stripHeaderLines(raw);
+        if (body) {
+          sections.push(body);
+        }
+      }
+      return sections.join("\\n") + "\\n";
+    }
+
+    function updateCustomListUi() {
+      const selectedIds = getSelectedIds();
+      const hasSelection = selectedIds.length > 0;
+      if (selectedCountNode) {
+        selectedCountNode.textContent = selectedIds.length + " selected";
+      }
+      if (copyRulesButton) {
+        copyRulesButton.disabled = !hasSelection;
+      }
+      if (copyUrlButton) {
+        copyUrlButton.disabled = !hasSelection;
+      }
+      if (clearButton) {
+        clearButton.disabled = !hasSelection;
+      }
+      if (subscribeLink) {
+        const customPath = buildCustomPath(selectedIds);
+        const locationUrl = resolveAssetUrl(customPath);
+        subscribeLink.setAttribute(
+          "href",
+          "abp:subscribe?location=" + encodeURIComponent(locationUrl) + "&title=" + encodeURIComponent("uBlock UX filters: custom"),
+        );
+        subscribeLink.classList.toggle("is-disabled", !hasSelection);
+        if (hasSelection) {
+          subscribeLink.removeAttribute("aria-disabled");
+          subscribeLink.removeAttribute("tabindex");
+        } else {
+          subscribeLink.setAttribute("aria-disabled", "true");
+          subscribeLink.setAttribute("tabindex", "-1");
+        }
+      }
+    }
 
     function setActiveTagButton(targetButton) {
       activeTag = targetButton ? targetButton.getAttribute("data-tag") || "" : "";
@@ -662,6 +842,12 @@ export function renderAppJs(): string {
       } else {
         params.delete("tag");
       }
+      const selectedIds = getSelectedIds();
+      if (selectedIds.length > 0) {
+        params.set("include", selectedIds.join(","));
+      } else {
+        params.delete("include");
+      }
       const search = params.toString();
       const pathname = window.location.pathname || "/";
       const hash = window.location.hash || "";
@@ -681,6 +867,18 @@ export function renderAppJs(): string {
         : null;
       const fallback = tagButtons.find((button) => (button.getAttribute("data-tag") || "") === "") || null;
       setActiveTagButton(matched || fallback);
+      const includeRaw = params.get("include") || "";
+      const includeSet = new Set(
+        includeRaw
+          .split(",")
+          .map((part) => part.trim())
+          .filter(Boolean),
+      );
+      for (const checkbox of checkboxes) {
+        const entryId = checkbox.getAttribute("data-entry-id") || "";
+        checkbox.checked = Boolean(entryId && includeSet.has(entryId));
+      }
+      updateCustomListUi();
       applyFilter();
     }
 
@@ -696,6 +894,82 @@ export function renderAppJs(): string {
         setActiveTagButton(button);
         applyFilter();
         syncUrl();
+      });
+    }
+
+    for (const checkbox of checkboxes) {
+      checkbox.addEventListener("change", () => {
+        updateCustomListUi();
+        syncUrl();
+      });
+    }
+
+    if (clearButton) {
+      clearButton.addEventListener("click", () => {
+        for (const checkbox of checkboxes) {
+          checkbox.checked = false;
+        }
+        updateCustomListUi();
+        syncUrl();
+      });
+    }
+
+    if (subscribeLink) {
+      subscribeLink.addEventListener("click", (event) => {
+        if (subscribeLink.getAttribute("aria-disabled") === "true" && event && typeof event.preventDefault === "function") {
+          event.preventDefault();
+        }
+      });
+    }
+
+    if (copyUrlButton) {
+      copyUrlButton.addEventListener("click", async () => {
+        const selectedIds = getSelectedIds();
+        if (selectedIds.length === 0 || !navigator.clipboard || !navigator.clipboard.writeText) {
+          return;
+        }
+        const url = resolveAssetUrl(buildCustomPath(selectedIds));
+        try {
+          await navigator.clipboard.writeText(url);
+          const original = copyUrlButton.textContent;
+          copyUrlButton.textContent = "Copied";
+          if (status) {
+            status.textContent = "Copied custom list URL";
+          }
+          window.setTimeout(() => {
+            copyUrlButton.textContent = original;
+          }, 1500);
+        } catch {
+          if (status) {
+            status.textContent = "Failed to copy custom list URL";
+          }
+        }
+      });
+    }
+
+    if (copyRulesButton) {
+      copyRulesButton.addEventListener("click", async () => {
+        const selectedIds = getSelectedIds();
+        if (selectedIds.length === 0 || !navigator.clipboard || !navigator.clipboard.writeText) {
+          return;
+        }
+        const rules = buildCombinedRules(selectedIds);
+        try {
+          await navigator.clipboard.writeText(rules);
+          const original = copyRulesButton.textContent;
+          copyRulesButton.textContent = "Copied";
+          if (status) {
+            status.textContent =
+              "Copied rules for " + selectedIds.length + (selectedIds.length === 1 ? " filter" : " filters");
+          }
+          window.setTimeout(() => {
+            copyRulesButton.textContent = original;
+          }, 1500);
+        } catch {
+          if (status) {
+            status.textContent = "Failed to copy rules";
+          }
+        }
       });
     }
 

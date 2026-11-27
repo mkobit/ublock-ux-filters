@@ -94,6 +94,9 @@ describe("@ubdf/web", () => {
     expect(await Bun.file(join(outDir, "styles.css")).exists()).toBe(true);
     expect(await Bun.file(join(outDir, "app.js")).exists()).toBe(true);
     expect(await Bun.file(join(outDir, "manifest.json")).exists()).toBe(true);
+    expect(await Bun.file(join(outDir, "manifest.json")).text()).toBe(
+      await Bun.file(join(rootDir, "dist/manifest.json")).text(),
+    );
     expect(await Bun.file(join(outDir, "sets/all-defaults.txt")).exists()).toBe(true);
     expect(await Bun.file(join(outDir, "raw/example.com/clean.txt")).exists()).toBe(true);
     expect(await Bun.file(join(outDir, "assets/example.com/before.png")).exists()).toBe(true);
@@ -109,6 +112,15 @@ describe("@ubdf/web", () => {
     expect(html).toContain("assets/example.com/diagram.svg");
     expect(html).toContain("<details class=\"rules-details\">");
     expect(html).toContain("<summary>View rules</summary>");
+    expect(html).toContain('id="custom-list-bar"');
+    expect(html).toContain("Custom filter list");
+    expect(html).toContain("0 selected");
+    expect(html).toContain("Copy rules for My filters");
+    expect(html).toContain("Subscribe to custom list");
+    expect(html).toContain("Copy custom URL");
+    expect(html).toContain("Clear selection");
+    expect(html).toContain('class="custom-select-checkbox" data-entry-id="example.com::clean"');
+    expect(html).toContain("Include in custom list");
   });
 
   test("escapes HTML special characters in descriptions and rules", async () => {
@@ -349,5 +361,266 @@ describe("@ubdf/web", () => {
     noHistoryHarness.searchInput.value = "other";
     noHistoryHarness.searchInput.dispatch("input");
     expect(noHistoryHarness.cards.map((card) => card.hidden)).toEqual([true, false, true]);
+  });
+
+  test("app.js manages custom list selection, ?include= sync, abp:subscribe URLs, and combined rule copy", async () => {
+    type Listener = (event?: { preventDefault?: () => void }) => void;
+
+    function createMockElement(
+      initialAttrs: Record<string, string> = {},
+      initialClasses: string[] = [],
+      rulesText = "",
+    ) {
+      const attrs = new Map<string, string>(Object.entries(initialAttrs));
+      const classes = new Set<string>(initialClasses);
+      const listeners = new Map<string, Listener[]>();
+      const codeNode = { textContent: rulesText };
+
+      return {
+        value: "",
+        checked: false,
+        disabled: false,
+        hidden: false,
+        textContent: "",
+        classList: {
+          toggle(name: string, force?: boolean) {
+            if (force === undefined) {
+              if (classes.has(name)) {
+                classes.delete(name);
+                return false;
+              }
+              classes.add(name);
+              return true;
+            }
+            if (force) {
+              classes.add(name);
+            } else {
+              classes.delete(name);
+            }
+            return force;
+          },
+          contains(name: string) {
+            return classes.has(name);
+          },
+        },
+        getAttribute(name: string) {
+          return attrs.get(name) ?? null;
+        },
+        setAttribute(name: string, value: string) {
+          attrs.set(name, value);
+        },
+        removeAttribute(name: string) {
+          attrs.delete(name);
+        },
+        querySelector(selector: string) {
+          if (selector === "pre code") {
+            return codeNode;
+          }
+          return null;
+        },
+        addEventListener(type: string, listener: Listener) {
+          const list = listeners.get(type) ?? [];
+          list.push(listener);
+          listeners.set(type, list);
+        },
+        dispatch(type: string, event?: { preventDefault?: () => void }) {
+          for (const listener of listeners.get(type) ?? []) {
+            listener(event);
+          }
+        },
+      };
+    }
+
+    function createCustomHarness(options: { search?: string; baseUrl?: string } = {}) {
+      const searchInput = createMockElement();
+      const countNode = createMockElement();
+      const selectedCountNode = createMockElement();
+      const copyRulesButton = createMockElement();
+      copyRulesButton.textContent = "Copy rules for My filters";
+      copyRulesButton.disabled = true;
+      const subscribeLink = createMockElement({ "aria-disabled": "true", tabindex: "-1" }, ["button", "is-disabled"]);
+      const copyUrlButton = createMockElement();
+      copyUrlButton.textContent = "Copy custom URL";
+      copyUrlButton.disabled = true;
+      const clearButton = createMockElement();
+      clearButton.disabled = true;
+      const statusNode = createMockElement();
+
+      const cards = [
+        createMockElement(
+          { "data-entry-id": "zeta.org::minimal", "data-search": "zeta minimal", "data-tags": "minimal" },
+          [],
+          "! Title: Zeta\n! Expires: 1 day\n\nzeta.org##.ad\n! Inline comment\nzeta.org##.promo\n",
+        ),
+        createMockElement(
+          { "data-entry-id": "alpha.com::clean", "data-search": "alpha clean", "data-tags": "ux" },
+          [],
+          "! Title: Alpha\nalpha.com##.banner\n",
+        ),
+      ];
+      const checkboxes = [
+        createMockElement({ "data-entry-id": "zeta.org::minimal" }),
+        createMockElement({ "data-entry-id": "alpha.com::clean" }),
+      ];
+      const tagButtons = [createMockElement({ "data-tag": "", "aria-pressed": "true" }, ["tag-filter", "is-active"])];
+
+      const windowListeners = new Map<string, Listener[]>();
+      const replaceStateCalls: string[] = [];
+      const copiedTexts: string[] = [];
+
+      const location = {
+        protocol: "https:",
+        pathname: "/ublock-ux-filters/",
+        search: options.search ?? "",
+        hash: "",
+        get href() {
+          return `https://filters.example.test${this.pathname}${this.search}${this.hash}`;
+        },
+      };
+
+      const mockWindow = {
+        location,
+        history: {
+          replaceState(_state: unknown, _title: string, url: string) {
+            replaceStateCalls.push(url);
+            const parsed = new URL(url, "https://filters.example.test");
+            location.pathname = parsed.pathname;
+            location.search = parsed.search;
+            location.hash = parsed.hash;
+          },
+        },
+        addEventListener(type: string, listener: Listener) {
+          const list = windowListeners.get(type) ?? [];
+          list.push(listener);
+          windowListeners.set(type, list);
+        },
+        dispatchPopstate() {
+          for (const listener of windowListeners.get("popstate") ?? []) {
+            listener();
+          }
+        },
+        setTimeout,
+      };
+
+      const mockDocument = {
+        documentElement: { dataset: options.baseUrl ? { baseUrl: options.baseUrl } : {} },
+        getElementById(id: string) {
+          if (id === "catalog-search") return searchInput;
+          if (id === "catalog-count") return countNode;
+          if (id === "custom-selected-count") return selectedCountNode;
+          if (id === "custom-copy-rules") return copyRulesButton;
+          if (id === "custom-subscribe-link") return subscribeLink;
+          if (id === "custom-copy-url") return copyUrlButton;
+          if (id === "custom-clear") return clearButton;
+          if (id === "copy-status") return statusNode;
+          return null;
+        },
+        querySelectorAll(selector: string) {
+          if (selector === ".variant-card") return cards;
+          if (selector === ".tag-filter") return tagButtons;
+          if (selector === ".custom-select-checkbox") return checkboxes;
+          return [];
+        },
+      };
+
+      const mockNavigator = {
+        clipboard: {
+          async writeText(text: string) {
+            copiedTexts.push(text);
+          },
+        },
+      };
+
+      const runApp = new Function("window", "document", "navigator", "URL", "URLSearchParams", renderAppJs());
+      runApp(mockWindow, mockDocument, mockNavigator, URL, URLSearchParams);
+
+      return {
+        checkboxes,
+        selectedCountNode,
+        copyRulesButton,
+        subscribeLink,
+        copyUrlButton,
+        clearButton,
+        statusNode,
+        location,
+        replaceStateCalls,
+        copiedTexts,
+        mockWindow,
+      };
+    }
+
+    // 1. Initial empty selection disables actions and restores from ?include=
+    const emptyHarness = createCustomHarness();
+    expect(emptyHarness.selectedCountNode.textContent).toBe("0 selected");
+    expect(emptyHarness.copyRulesButton.disabled).toBe(true);
+    expect(emptyHarness.copyUrlButton.disabled).toBe(true);
+    expect(emptyHarness.clearButton.disabled).toBe(true);
+    expect(emptyHarness.subscribeLink.getAttribute("aria-disabled")).toBe("true");
+
+    const preselected = createCustomHarness({
+      search: "?include=zeta.org::minimal,alpha.com::clean",
+    });
+    expect(preselected.checkboxes[0]!.checked).toBe(true);
+    expect(preselected.checkboxes[1]!.checked).toBe(true);
+    expect(preselected.selectedCountNode.textContent).toBe("2 selected");
+    expect(preselected.copyRulesButton.disabled).toBe(false);
+    expect(preselected.subscribeLink.getAttribute("aria-disabled")).toBeNull();
+    expect(preselected.subscribeLink.getAttribute("href")).toBe(
+      `abp:subscribe?location=${encodeURIComponent(
+        "https://filters.example.test/ublock-ux-filters/custom.txt?include=alpha.com::clean,zeta.org::minimal",
+      )}&title=${encodeURIComponent("uBlock UX filters: custom")}`,
+    );
+
+    // 2. Selecting checkboxes updates sorted ?include=, subscribe link (with baseUrl), and clipboard actions
+    const interactive = createCustomHarness({ baseUrl: "https://cdn.example.org/ublock/" });
+    interactive.checkboxes[0]!.checked = true;
+    interactive.checkboxes[0]!.dispatch("change");
+    expect(interactive.selectedCountNode.textContent).toBe("1 selected");
+    expect(interactive.replaceStateCalls.at(-1)).toBe("/ublock-ux-filters/?include=zeta.org%3A%3Aminimal");
+
+    interactive.checkboxes[1]!.checked = true;
+    interactive.checkboxes[1]!.dispatch("change");
+    expect(interactive.selectedCountNode.textContent).toBe("2 selected");
+    expect(interactive.replaceStateCalls.at(-1)).toBe(
+      "/ublock-ux-filters/?include=alpha.com%3A%3Aclean%2Czeta.org%3A%3Aminimal",
+    );
+    expect(interactive.subscribeLink.getAttribute("href")).toBe(
+      `abp:subscribe?location=${encodeURIComponent(
+        "https://cdn.example.org/ublock/custom.txt?include=alpha.com::clean,zeta.org::minimal",
+      )}&title=${encodeURIComponent("uBlock UX filters: custom")}`,
+    );
+
+    interactive.copyUrlButton.dispatch("click");
+    await Promise.resolve();
+    expect(interactive.copiedTexts.at(-1)).toBe(
+      "https://cdn.example.org/ublock/custom.txt?include=alpha.com::clean,zeta.org::minimal",
+    );
+    expect(interactive.statusNode.textContent).toBe("Copied custom list URL");
+
+    interactive.copyRulesButton.dispatch("click");
+    await Promise.resolve();
+    expect(interactive.copiedTexts.at(-1)).toBe(
+      [
+        "! Title: ublock-ux-filters (custom)",
+        "alpha.com##.banner",
+        "zeta.org##.ad",
+        "! Inline comment",
+        "zeta.org##.promo",
+        "",
+      ].join("\n"),
+    );
+    expect(interactive.statusNode.textContent).toBe("Copied rules for 2 filters");
+
+    // 3. Clear selection and popstate restore
+    interactive.clearButton.dispatch("click");
+    expect(interactive.selectedCountNode.textContent).toBe("0 selected");
+    expect(interactive.checkboxes.map((box) => box.checked)).toEqual([false, false]);
+    expect(interactive.replaceStateCalls.at(-1)).toBe("/ublock-ux-filters/");
+    expect(interactive.copyRulesButton.disabled).toBe(true);
+
+    interactive.location.search = "?include=alpha.com::clean";
+    interactive.mockWindow.dispatchPopstate();
+    expect(interactive.checkboxes.map((box) => box.checked)).toEqual([false, true]);
+    expect(interactive.selectedCountNode.textContent).toBe("1 selected");
   });
 });

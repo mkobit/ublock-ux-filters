@@ -3,8 +3,9 @@ import { lstat, mkdir, mkdtemp, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileWorkspace } from "./compiler.ts";
-import type { FilterParserAdapter } from "./compiler.ts";
+import { compileWorkspace, lintWorkspace } from "./compiler.ts";
+import type { FilterParserAdapter, LintOptions } from "./compiler.ts";
+import { aglintAdapter } from "./parser-adapter.ts";
 
 const adapter: FilterParserAdapter = {
   async lint(filePath, content) {
@@ -491,5 +492,27 @@ test("Gives an actionable diagnostic for an active lock owner and preserves simu
       .toBe("a.example##html:style(color: black;)\n");
     expect(await Bun.file(join(root, "dist/sets/all.txt")).exists()).toBe(true);
     expect((await readdir(root)).some((name) => name.startsWith(".dist.filter-build"))).toBe(false);
+  });
+});
+
+test("Passes allowed_domains from filter.toml to adapter.lint and rejects out-of-scope cosmetic rules", async () => {
+  await fixture(async (root) => {
+    await writeHost(root, "a.example");
+    const seenOptions: Array<LintOptions | undefined> = [];
+    const spy: FilterParserAdapter = {
+      async lint(filePath, content, options) {
+        seenOptions.push(options);
+        return aglintAdapter.lint(filePath, content, options);
+      },
+    };
+
+    await lintWorkspace(root, spy);
+    expect(seenOptions).toEqual([{ allowedDomains: ["a.example"] }]);
+
+    await Bun.write(join(root, "filters/a.example/dark.ubo"), "! header\n##.global-rule\n");
+    await expect(lintWorkspace(root, aglintAdapter)).rejects.toMatchObject({
+      code: "LINT_FAILED",
+      message: expect.stringContaining(":2 [domain-scope]"),
+    });
   });
 });

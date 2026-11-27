@@ -59,7 +59,7 @@ export async function runCli(args: string[], adapter: FilterParserAdapter) {
     outDir,
     gitSha,
     homepageUrl,
-    ...(incremental ? { incremental: true, cacheKey: "aglint-v1" } : {}),
+    ...(incremental ? { incremental: true, cacheKey: "aglint-v2" } : {}),
     ...(generatedAt === undefined ? {} : { generatedAt }),
   }, adapter, host);
 }

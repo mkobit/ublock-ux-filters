@@ -1,0 +1,8 @@
+{
+  "name": "@ubdf/preview",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ubdf/schema": "workspace:*"
+  }
+}

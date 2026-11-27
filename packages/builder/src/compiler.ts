@@ -214,6 +214,39 @@ function cachedReport(value: unknown, source: string, content: string, filePath:
   return { filePath, ruleCount: Reflect.get(value, "ruleCount") as number, errors: [] };
 }
 
+async function readHostMeta(root: string, hostDir: string) {
+  const descriptorPath = join(hostDir, "filter.toml");
+  const descriptor = await readText(root, descriptorPath);
+  try {
+    return {
+      hostDir,
+      meta: parseHostMeta(Bun.TOML.parse(descriptor), basename(hostDir)),
+    };
+  } catch (error) {
+    throw new FilterBuildError("INVALID_META", `${descriptorPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function readFragment(
+  root: string,
+  hostDir: string,
+  meta: HostMeta,
+  variant: string,
+  adapter: FilterParserAdapter,
+  cache?: IncrementalCache,
+  previousEntries?: Record<string, unknown>,
+) {
+  const description = meta.variants[variant]!;
+  const file = join(hostDir, description.file);
+  const raw = await readText(root, file);
+  const content = normalizeFragment(raw);
+  const id = filterId(meta.host, variant);
+  const source = digest(`${relative(root, file)}\0${raw}`);
+  const report = cachedReport(cache?.variants[id], source, content, file, previousEntries?.[id])
+    ?? await adapter.lint(file, content);
+  return { variant, meta: description, content, report, source };
+}
+
 async function readHost(
   root: string,
   hostDir: string,
@@ -221,25 +254,10 @@ async function readHost(
   cache?: IncrementalCache,
   previousEntries?: Record<string, unknown>,
 ) {
-  const descriptorPath = join(hostDir, "filter.toml");
-  const descriptor = await readText(root, descriptorPath);
-  let meta: HostMeta;
-  try {
-    meta = parseHostMeta(Bun.TOML.parse(descriptor), basename(hostDir));
-  } catch (error) {
-    throw new FilterBuildError("INVALID_META", `${descriptorPath}: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  const { meta } = await readHostMeta(root, hostDir);
   const fragments = [];
   for (const variant of Object.keys(meta.variants).sort()) {
-    const description = meta.variants[variant]!;
-    const file = join(hostDir, description.file);
-    const raw = await readText(root, file);
-    const content = normalizeFragment(raw);
-    const id = filterId(meta.host, variant);
-    const source = digest(`${relative(root, file)}\0${raw}`);
-    const report = cachedReport(cache?.variants[id], source, content, file, previousEntries?.[id])
-      ?? await adapter.lint(file, content);
-    fragments.push({ variant, meta: description, content, report, source });
+    fragments.push(await readFragment(root, hostDir, meta, variant, adapter, cache, previousEntries));
   }
   return { meta, fragments };
 }
@@ -250,15 +268,9 @@ export async function lintHostPackage(hostDir: string, adapter: FilterParserAdap
   return fragments.map(({ report }) => report);
 }
 
-async function readHosts(
-  root: string,
-  adapter: FilterParserAdapter,
-  onlyHost?: string,
-  cache?: IncrementalCache,
-  previousEntries?: Record<string, unknown>,
-) {
+async function readHostMetas(root: string, onlyHost?: string) {
   const directory = join(root, "filters");
-  const hosts = [];
+  const hosts: Array<{ hostDir: string; meta: HostMeta }> = [];
   for (const name of await list(root, directory)) {
     if (name.startsWith(".") || (onlyHost !== undefined && name !== onlyHost)) {
       continue;
@@ -266,11 +278,29 @@ async function readHosts(
     const path = join(directory, name);
     await rejectSymlinks(root, path);
     if ((await status(path))?.isDirectory()) {
-      hosts.push(await readHost(root, path, adapter, cache, previousEntries));
+      hosts.push(await readHostMeta(root, path));
     }
   }
   if (onlyHost !== undefined && hosts.length === 0) {
     throw new FilterBuildError("INVALID_META", `Unknown host: ${onlyHost}`);
+  }
+  return hosts;
+}
+
+async function readHosts(
+  root: string,
+  adapter: FilterParserAdapter,
+  onlyHost?: string,
+  cache?: IncrementalCache,
+  previousEntries?: Record<string, unknown>,
+) {
+  const hosts = [];
+  for (const { hostDir, meta } of await readHostMetas(root, onlyHost)) {
+    const fragments = [];
+    for (const variant of Object.keys(meta.variants).sort()) {
+      fragments.push(await readFragment(root, hostDir, meta, variant, adapter, cache, previousEntries));
+    }
+    hosts.push({ meta, fragments });
   }
   return hosts;
 }
@@ -643,28 +673,23 @@ export async function compileWorkspace(
     const hosts = new Map<string, HostMeta>();
     const entries = new Map<CanonicalFilterId, CompiledEntry>();
     const files = new Map<string, string>();
-    const packages = await readHosts(root, adapter, undefined, cache, previousEntries);
-    const selected = onlyHost === undefined
-      ? packages
-      : packages.filter(({ meta }) => meta.host === onlyHost);
-    if (onlyHost !== undefined && selected.length === 0) {
+    const packages = await readHostMetas(root);
+    if (onlyHost !== undefined && !packages.some(({ meta }) => meta.host === onlyHost)) {
       throw new FilterBuildError("INVALID_META", `Unknown host: ${onlyHost}`);
     }
-    const reports = new Map<CanonicalFilterId, LintReport>();
-    for (const { meta, fragments } of packages) {
+    for (const { meta } of packages) {
       hosts.set(meta.host, meta);
-      for (const fragment of fragments) {
-        const id = filterId(meta.host, fragment.variant);
-        reports.set(id, fragment.report);
-        const fragmentPath = `raw/${meta.host}/${fragment.variant}.txt`;
+      for (const variant of Object.keys(meta.variants).sort()) {
+        const description = meta.variants[variant]!;
+        const id = filterId(meta.host, variant);
         entries.set(id, {
-          id, host: meta.host, variant: fragment.variant,
-          description: fragment.meta.description, tags: fragment.meta.tags,
-          resolvedIncludes: fragment.meta.includes ?? [], fragmentPath,
-          ruleCount: fragment.report.ruleCount,
-          sha256: digest(fragment.content),
+          id, host: meta.host, variant,
+          description: description.description, tags: description.tags,
+          resolvedIncludes: description.includes ?? [],
+          fragmentPath: `raw/${meta.host}/${variant}.txt`,
+          ruleCount: 0,
+          sha256: "",
         });
-        files.set(fragmentPath, fragment.content);
       }
     }
     const aliases = compileAliases([...hosts.values()], entries);
@@ -675,6 +700,26 @@ export async function compileWorkspace(
       .filter((entry) => onlyHost === undefined || entry.host === onlyHost)
       .map((entry) => entry.id);
     const relevant = new Set(orderEntries(requested, entries));
+    const reports = new Map<CanonicalFilterId, LintReport>();
+    const cacheVariants: IncrementalCache["variants"] = {};
+    for (const { hostDir, meta } of packages) {
+      for (const variant of Object.keys(meta.variants).sort()) {
+        const id = filterId(meta.host, variant);
+        if (!relevant.has(id)) continue;
+        const fragment = await readFragment(root, hostDir, meta, variant, adapter, cache, previousEntries);
+        reports.set(id, fragment.report);
+        const entry = entries.get(id)!;
+        entry.ruleCount = fragment.report.ruleCount;
+        entry.sha256 = digest(fragment.content);
+        files.set(entry.fragmentPath, fragment.content);
+        if (cacheEnabled && fragment.report.errors.length === 0) {
+          cacheVariants[id] = {
+            source: fragment.source,
+            ruleCount: fragment.report.ruleCount,
+          };
+        }
+      }
+    }
     assertLint([...relevant].map((id) => reports.get(id)!));
     const sets = new Map<string, CompiledSet>();
     const expires = "1 day";
@@ -705,10 +750,9 @@ export async function compileWorkspace(
       sets.set(set.name, { name: set.name, description: set.description, setPath, members });
     }
     if (onlyHost !== undefined) {
-      for (const [id, entry] of entries) {
+      for (const id of entries.keys()) {
         if (!relevant.has(id)) {
           entries.delete(id);
-          files.delete(entry.fragmentPath);
         }
       }
     }
@@ -716,9 +760,9 @@ export async function compileWorkspace(
       version: options.gitSha,
       generatedAt: options.generatedAt ?? new Date().toISOString(),
       expires,
-      hosts: Object.fromEntries(packages.flatMap(({ meta, fragments }) => {
-        const variants = fragments.filter(({ variant }) => entries.has(filterId(meta.host, variant)))
-          .map(({ variant }) => variant);
+      hosts: Object.fromEntries(packages.flatMap(({ meta }) => {
+        const variants = Object.keys(meta.variants).sort()
+          .filter((variant) => entries.has(filterId(meta.host, variant)));
         if (variants.length === 0) return [];
         const defaultVariant = meta.default_variant;
         return [[meta.host, {
@@ -734,22 +778,11 @@ export async function compileWorkspace(
     files.set("manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
     await writeArtifacts(destination, files, previousEntries !== undefined, hooks);
     if (cacheEnabled) {
-      const variants: IncrementalCache["variants"] = {};
-      for (const { meta, fragments } of packages) {
-        for (const fragment of fragments) {
-          if (fragment.report.errors.length === 0) {
-            variants[filterId(meta.host, fragment.variant)] = {
-              source: fragment.source,
-              ruleCount: fragment.report.ruleCount,
-            };
-          }
-        }
-      }
       await writeCache(root, cachePath, {
         version: 1,
         shared: shared!,
         key: options.cacheKey!,
-        variants,
+        variants: cacheVariants,
       });
     }
     return manifest;

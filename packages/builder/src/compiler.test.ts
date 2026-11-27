@@ -298,6 +298,59 @@ test("Builds a selected host and its includes without emitting unrelated hosts o
   });
 });
 
+test("Isolates host builds from unrelated missing fragments while preserving cross-host includes and aliases", async () => {
+  await fixture(async (rootDir) => {
+    await writeHost(rootDir, "a.example", 'includes = ["old.example::dark"]');
+    await Bun.write(join(rootDir, "filters/b.example/filter.toml"), `
+host = "b.example"
+display_name = "b.example"
+allowed_domains = ["b.example"]
+default_variant = "dark"
+[aliases]
+"old.example::dark" = "dark"
+[variants.dark]
+file = "dark.ubo"
+description = "Dark theme"
+tags = ["dark-mode"]
+[variants.extra]
+file = "extra.ubo"
+description = "Extra theme"
+tags = []
+`);
+    await Bun.write(join(rootDir, "filters/b.example/dark.ubo"), "b.example##html:style(color: black;)\n");
+    await writeHost(rootDir, "c.example");
+    await rm(join(rootDir, "filters/c.example/dark.ubo"));
+
+    const manifest = await compileWorkspace({
+      rootDir, outDir: "dist", gitSha: "demo", homepageUrl: "https://example.org",
+    }, adapter, "a.example");
+
+    expect(Object.keys(manifest.entries)).toEqual(["a.example::dark", "b.example::dark"]);
+    expect(manifest.entries["a.example::dark"]?.resolvedIncludes).toEqual(["b.example::dark"]);
+    expect(manifest.aliases).toEqual({ "old.example::dark": "b.example::dark" });
+    expect(manifest.hosts["b.example"]?.variants).toEqual(["dark"]);
+    expect(await Bun.file(join(rootDir, "dist/raw/c.example/dark.txt")).exists()).toBe(false);
+    expect(await Bun.file(join(rootDir, "dist/raw/b.example/extra.txt")).exists()).toBe(false);
+
+    await expect(build(rootDir, "full-dist")).rejects.toThrow(/regular file/i);
+  });
+});
+
+test.each([
+  { label: "selected host fragment", missingPath: "filters/a.example/dark.ubo" },
+  { label: "included host fragment", missingPath: "filters/b.example/dark.ubo" },
+])("Fails host build when $label is missing", async ({ missingPath }) => {
+  await fixture(async (rootDir) => {
+    await writeHost(rootDir, "a.example", 'includes = ["b.example::dark"]');
+    await writeHost(rootDir, "b.example");
+    await rm(join(rootDir, missingPath));
+
+    await expect(compileWorkspace({
+      rootDir, outDir: "dist", gitSha: "demo", homepageUrl: "https://example.org",
+    }, adapter, "a.example")).rejects.toThrow(/regular file/i);
+  });
+});
+
 test("Resolves aliases for retired hosts in set selections and includes", async () => {
   await fixture(async (root) => {
     await writeHost(root, "a.example", 'includes = ["old.example::dark"]');

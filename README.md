@@ -108,3 +108,4 @@ Wait for the required CI checks to pass, then squash merge.
 
 Run `mise exec -- bd prime` for the Beads workflow and `mise exec -- bd ready` for the current queue.
 Issue `ubouf-org` tracks the screenshot regression tests.
+See [the preview toolchain refresh guide](docs/preview-toolchain-refresh.md) for updating or rolling back the pinned Firefox, `geckodriver`, and uBlock Origin versions.

@@ -1,4 +1,5 @@
-import { link, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm, rmdir } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, readdir, realpath, rename, rm } from "node:fs/promises";
+import { hostname } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { parseFilterSetMeta, parseHostMeta, splitFilterToken } from "@ubdf/schema";
 import type { CanonicalFilterId, FilterSetMeta, HostMeta } from "@ubdf/schema";
@@ -23,6 +24,10 @@ export interface CompileOptions {
   cacheKey?: string;
 }
 
+export interface CompileHooks {
+  beforeOutputSwap?: () => Promise<void> | void;
+}
+
 type ErrorCode = "INVALID_META" | "INVALID_SET" | "LINT_FAILED"
   | "MISSING_INCLUDE" | "INCLUDE_CYCLE" | "ALIAS_CONFLICT";
 
@@ -30,6 +35,10 @@ export class FilterBuildError extends Error {
   constructor(readonly code: ErrorCode, message: string) {
     super(message);
   }
+}
+
+class BuildLockError extends Error {
+  readonly code = "EEXIST";
 }
 
 interface CompiledEntry {
@@ -408,7 +417,141 @@ async function isBuildOutput(directory: string) {
   return expected.size === found.size;
 }
 
-async function validateOutput(root: string, destination: string, host?: string) {
+interface LockOwner {
+  pid: number;
+  startedAt: string;
+  hostname: string;
+}
+
+function isProcessAlive(pid: number) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
+  }
+}
+
+async function readLockOwner(ownerPath: string): Promise<LockOwner | undefined> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const raw = await Bun.file(ownerPath).json() as Partial<LockOwner>;
+      if (typeof raw === "object" && raw !== null
+        && typeof raw.pid === "number" && Number.isSafeInteger(raw.pid) && raw.pid > 0
+        && typeof raw.startedAt === "string"
+        && typeof raw.hostname === "string") {
+        return raw as LockOwner;
+      }
+      return undefined;
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT" && attempt < 2) {
+        await Bun.sleep(15);
+        continue;
+      }
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+function activeLockError(destination: string, lock: string, owner?: LockOwner) {
+  if (owner) {
+    return new BuildLockError(
+      `Output ${destination} is locked by an active build (PID ${owner.pid}, started ${owner.startedAt} on ${owner.hostname}). Wait for it to finish, or remove ${lock} if that process is no longer running.`,
+    );
+  }
+  return new BuildLockError(
+    `Output ${destination} is locked (${lock}; owner metadata unavailable). Wait for any active build to finish, or remove ${lock} if no build is running.`,
+  );
+}
+
+async function recoverInterruptedSwap(parent: string, destination: string, prefix: string) {
+  const tempDirs = (await readdir(parent, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith(prefix))
+    .map((entry) => join(parent, entry.name));
+  if (tempDirs.length === 0) return;
+
+  if (!(await status(destination))) {
+    let bestPath: string | undefined;
+    let bestValid = false;
+    let bestMtime = -1;
+    for (const dir of tempDirs) {
+      const previous = join(dir, "previous");
+      const info = await status(previous);
+      if (!info?.isDirectory()) continue;
+      const valid = await isBuildOutput(previous);
+      if (bestPath === undefined || (valid && !bestValid) || (valid === bestValid && info.mtimeMs > bestMtime)) {
+        bestPath = previous;
+        bestValid = valid;
+        bestMtime = info.mtimeMs;
+      }
+    }
+    if (bestPath !== undefined) {
+      await rename(bestPath, destination);
+    }
+  }
+
+  for (const dir of tempDirs) {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function withOutputLock<T>(
+  destination: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const parent = dirname(destination);
+  const base = basename(destination);
+  const lock = join(parent, `.${base}.filter-build.lock`);
+  const ownerPath = join(lock, "owner.json");
+  const currentHost = hostname();
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await mkdir(lock, { recursive: false });
+      try {
+        const owner: LockOwner = { pid: process.pid, startedAt: new Date().toISOString(), hostname: currentHost };
+        await Bun.write(ownerPath, `${JSON.stringify(owner)}\n`);
+      } catch (error) {
+        await rm(lock, { recursive: true, force: true });
+        throw error;
+      }
+      try {
+        await recoverInterruptedSwap(parent, destination, `.${base}.filter-build-`);
+        return await run();
+      } finally {
+        await rm(lock, { recursive: true, force: true });
+      }
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) {
+        throw error;
+      }
+      const lockInfo = await status(lock);
+      if (lockInfo && !lockInfo.isDirectory()) {
+        throw new BuildLockError(`Output lock path ${lock} is not a directory. Remove it if no build is running.`);
+      }
+      const owner = await readLockOwner(ownerPath);
+      if (owner && owner.hostname === currentHost && !isProcessAlive(owner.pid)) {
+        const stale = join(parent, `.${base}.filter-build.lock.stale-${process.pid}-${crypto.randomUUID()}`);
+        try {
+          await rename(lock, stale);
+          await rm(stale, { recursive: true, force: true });
+          continue;
+        } catch (renameError) {
+          if (renameError instanceof Error && "code" in renameError && renameError.code === "ENOENT") {
+            continue;
+          }
+          throw renameError;
+        }
+      }
+      throw activeLockError(destination, lock, owner);
+    }
+  }
+  throw activeLockError(destination, lock, await readLockOwner(ownerPath));
+}
+
+async function validateOutputPath(root: string, destination: string, host?: string) {
   if (!childPath(root, destination)) {
     throw new Error(`Output must be inside the workspace: ${destination}`);
   }
@@ -418,6 +561,12 @@ async function validateOutput(root: string, destination: string, host?: string) 
     || basename(destination).startsWith(".") || reservedPaths.includes(basename(destination)))) {
     throw new Error(`Output must be a workspace directory outside source directories: ${destination}`);
   }
+  if (host !== undefined && destination === hostOutput && !(await status(dirname(destination)))?.isDirectory()) {
+    throw new FilterBuildError("INVALID_META", `Unknown host: ${host}`);
+  }
+}
+
+async function validateOutputDirectory(destination: string) {
   const current = await status(destination);
   if (current && (!current.isDirectory()
     || ((await readdir(destination)).length > 0 && !(await isBuildOutput(destination))))) {
@@ -426,53 +575,52 @@ async function validateOutput(root: string, destination: string, host?: string) 
 }
 
 async function writeArtifacts(
-  root: string,
   destination: string,
   files: Map<string, string>,
-  host?: string,
   reuseUnchanged = false,
+  hooks?: CompileHooks,
 ) {
   const parent = dirname(destination);
-  const lock = join(parent, `.${basename(destination)}.filter-build.lock`);
-  await mkdir(lock, { recursive: false });
+  const temporary = await mkdtemp(join(parent, `.${basename(destination)}.filter-build-`));
+  const next = join(temporary, "next");
+  const previous = join(temporary, "previous");
+  let restorePrevious = false;
   try {
-    const temporary = await mkdtemp(join(parent, ".filter-build-"));
-    const next = join(temporary, "next");
-    const previous = join(temporary, "previous");
-    let restorePrevious = false;
-    try {
-      await validateOutput(root, destination, host);
-      for (const [path, content] of files) {
-        const source = join(destination, path);
-        const target = join(next, path);
-        if (reuseUnchanged && (await status(source))?.isFile()
-          && Buffer.from(await Bun.file(source).arrayBuffer()).equals(Buffer.from(content))) {
-          try {
-            await mkdir(dirname(target), { recursive: true });
-            await link(source, target);
-            continue;
-          } catch {
-            // Filesystems without hard-link support write a fresh artifact.
-          }
+    await validateOutputDirectory(destination);
+    for (const [path, content] of files) {
+      const source = join(destination, path);
+      const target = join(next, path);
+      if (reuseUnchanged && (await status(source))?.isFile()
+        && Buffer.from(await Bun.file(source).arrayBuffer()).equals(Buffer.from(content))) {
+        try {
+          await mkdir(dirname(target), { recursive: true });
+          await link(source, target);
+          continue;
+        } catch {
+          // Filesystems without hard-link support write a fresh artifact.
         }
-        await Bun.write(target, content);
       }
-      if (await status(destination)) {
-        await rename(destination, previous);
-        restorePrevious = true;
-      }
-      await rename(next, destination);
-      restorePrevious = false;
-    } finally {
-      if (restorePrevious) await rename(previous, destination);
-      await rm(temporary, { recursive: true, force: true });
+      await Bun.write(target, content);
     }
+    if (await status(destination)) {
+      await rename(destination, previous);
+      restorePrevious = true;
+    }
+    await hooks?.beforeOutputSwap?.();
+    await rename(next, destination);
+    restorePrevious = false;
   } finally {
-    await rmdir(lock);
+    if (restorePrevious) await rename(previous, destination);
+    await rm(temporary, { recursive: true, force: true });
   }
 }
 
-export async function compileWorkspace(options: CompileOptions, adapter: FilterParserAdapter, onlyHost?: string) {
+export async function compileWorkspace(
+  options: CompileOptions,
+  adapter: FilterParserAdapter,
+  onlyHost?: string,
+  hooks?: CompileHooks,
+) {
   const root = await realpath(options.rootDir);
   if (onlyHost !== undefined) {
     const token = splitFilterToken(onlyHost);
@@ -481,126 +629,129 @@ export async function compileWorkspace(options: CompileOptions, adapter: FilterP
     }
   }
   const destination = resolve(root, options.outDir);
-  await validateOutput(root, destination, onlyHost);
-  const cacheEnabled = options.incremental && options.cacheKey !== undefined;
-  const cachePath = join(root, ".filter-build-cache", `${digest(relative(root, destination))}.json`);
-  const shared = cacheEnabled ? await sharedFingerprint(root) : undefined;
-  const previous = cacheEnabled ? await cacheFor(root, cachePath) : undefined;
-  const cache = previous !== undefined && previous.shared === shared && previous.key === options.cacheKey
-    ? previous
-    : undefined;
-  const previousEntries = cache === undefined ? undefined : await outputEntries(destination);
-  const hosts = new Map<string, HostMeta>();
-  const entries = new Map<CanonicalFilterId, CompiledEntry>();
-  const files = new Map<string, string>();
-  const packages = await readHosts(root, adapter, undefined, cache, previousEntries);
-  const selected = onlyHost === undefined
-    ? packages
-    : packages.filter(({ meta }) => meta.host === onlyHost);
-  if (onlyHost !== undefined && selected.length === 0) {
-    throw new FilterBuildError("INVALID_META", `Unknown host: ${onlyHost}`);
-  }
-  const reports = new Map<CanonicalFilterId, LintReport>();
-  for (const { meta, fragments } of packages) {
-    hosts.set(meta.host, meta);
-    for (const fragment of fragments) {
-      const id = filterId(meta.host, fragment.variant);
-      reports.set(id, fragment.report);
-      const fragmentPath = `raw/${meta.host}/${fragment.variant}.txt`;
-      entries.set(id, {
-        id, host: meta.host, variant: fragment.variant,
-        description: fragment.meta.description, tags: fragment.meta.tags,
-        resolvedIncludes: fragment.meta.includes ?? [], fragmentPath,
-        ruleCount: fragment.report.ruleCount,
-        sha256: digest(fragment.content),
-      });
-      files.set(fragmentPath, fragment.content);
+  await validateOutputPath(root, destination, onlyHost);
+  return await withOutputLock(destination, async () => {
+    await validateOutputDirectory(destination);
+    const cacheEnabled = options.incremental && options.cacheKey !== undefined;
+    const cachePath = join(root, ".filter-build-cache", `${digest(relative(root, destination))}.json`);
+    const shared = cacheEnabled ? await sharedFingerprint(root) : undefined;
+    const previous = cacheEnabled ? await cacheFor(root, cachePath) : undefined;
+    const cache = previous !== undefined && previous.shared === shared && previous.key === options.cacheKey
+      ? previous
+      : undefined;
+    const previousEntries = cache === undefined ? undefined : await outputEntries(destination);
+    const hosts = new Map<string, HostMeta>();
+    const entries = new Map<CanonicalFilterId, CompiledEntry>();
+    const files = new Map<string, string>();
+    const packages = await readHosts(root, adapter, undefined, cache, previousEntries);
+    const selected = onlyHost === undefined
+      ? packages
+      : packages.filter(({ meta }) => meta.host === onlyHost);
+    if (onlyHost !== undefined && selected.length === 0) {
+      throw new FilterBuildError("INVALID_META", `Unknown host: ${onlyHost}`);
     }
-  }
-  const aliases = compileAliases([...hosts.values()], entries);
-  for (const entry of entries.values()) {
-    entry.resolvedIncludes = entry.resolvedIncludes.map((id) => aliases.get(id) ?? id);
-  }
-  const requested = [...entries.values()]
-    .filter((entry) => onlyHost === undefined || entry.host === onlyHost)
-    .map((entry) => entry.id);
-  const relevant = new Set(orderEntries(requested, entries));
-  assertLint([...relevant].map((id) => reports.get(id)!));
-  const sets = new Map<string, CompiledSet>();
-  const expires = "1 day";
-  const directory = join(root, "sets");
-  for (const filename of onlyHost === undefined ? await list(root, directory) : []) {
-    if (!filename.endsWith(".toml")) continue;
-    const path = join(directory, filename);
-    const raw = await readText(root, path);
-    let set: FilterSetMeta;
-    try {
-      set = parseFilterSetMeta(Bun.TOML.parse(raw), basename(filename, ".toml"));
-    } catch (error) {
-      throw new FilterBuildError("INVALID_SET", `${path}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    const members = selectMembers(set, hosts, entries, aliases);
-    const ids = orderEntries(members, entries);
-    const setPath = `sets/${set.name}.txt`;
-    const header = [
-      `! Title: ${set.name}`,
-      `! Expires: ${expires}`,
-      `! Version: ${options.gitSha}`,
-      `! Homepage: ${options.homepageUrl}`,
-      `! Included: ${ids.join(", ")}`,
-    ].join("\n");
-    const content = ids.map((id) => files.get(entries.get(id)!.fragmentPath)!)
-      .map((fragment) => fragment.replace(/^(?:\[Adblock[^\n]*\]|!\s*(?:Title|Expires|Version|Homepage):[^\n]*)\n/gim, ""));
-    files.set(setPath, `${header}\n\n${content.join("")}`);
-    sets.set(set.name, { name: set.name, description: set.description, setPath, members });
-  }
-  if (onlyHost !== undefined) {
-    for (const [id, entry] of entries) {
-      if (!relevant.has(id)) {
-        entries.delete(id);
-        files.delete(entry.fragmentPath);
+    const reports = new Map<CanonicalFilterId, LintReport>();
+    for (const { meta, fragments } of packages) {
+      hosts.set(meta.host, meta);
+      for (const fragment of fragments) {
+        const id = filterId(meta.host, fragment.variant);
+        reports.set(id, fragment.report);
+        const fragmentPath = `raw/${meta.host}/${fragment.variant}.txt`;
+        entries.set(id, {
+          id, host: meta.host, variant: fragment.variant,
+          description: fragment.meta.description, tags: fragment.meta.tags,
+          resolvedIncludes: fragment.meta.includes ?? [], fragmentPath,
+          ruleCount: fragment.report.ruleCount,
+          sha256: digest(fragment.content),
+        });
+        files.set(fragmentPath, fragment.content);
       }
     }
-  }
-  const manifest: CompiledManifest = {
-    version: options.gitSha,
-    generatedAt: options.generatedAt ?? new Date().toISOString(),
-    expires,
-    hosts: Object.fromEntries(packages.flatMap(({ meta, fragments }) => {
-      const variants = fragments.filter(({ variant }) => entries.has(filterId(meta.host, variant)))
-        .map(({ variant }) => variant);
-      if (variants.length === 0) return [];
-      const defaultVariant = meta.default_variant;
-      return [[meta.host, {
-        displayName: meta.display_name,
-        ...(defaultVariant !== undefined && variants.includes(defaultVariant) ? { defaultVariant } : {}),
-        variants,
-      }]];
-    })),
-    sets: Object.fromEntries(sets),
-    aliases: Object.fromEntries([...aliases].filter(([, id]) => entries.has(id))),
-    entries: Object.fromEntries(entries),
-  };
-  files.set("manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
-  await writeArtifacts(root, destination, files, onlyHost, previousEntries !== undefined);
-  if (cacheEnabled) {
-    const variants: IncrementalCache["variants"] = {};
-    for (const { meta, fragments } of packages) {
-      for (const fragment of fragments) {
-        if (fragment.report.errors.length === 0) {
-          variants[filterId(meta.host, fragment.variant)] = {
-            source: fragment.source,
-            ruleCount: fragment.report.ruleCount,
-          };
+    const aliases = compileAliases([...hosts.values()], entries);
+    for (const entry of entries.values()) {
+      entry.resolvedIncludes = entry.resolvedIncludes.map((id) => aliases.get(id) ?? id);
+    }
+    const requested = [...entries.values()]
+      .filter((entry) => onlyHost === undefined || entry.host === onlyHost)
+      .map((entry) => entry.id);
+    const relevant = new Set(orderEntries(requested, entries));
+    assertLint([...relevant].map((id) => reports.get(id)!));
+    const sets = new Map<string, CompiledSet>();
+    const expires = "1 day";
+    const directory = join(root, "sets");
+    for (const filename of onlyHost === undefined ? await list(root, directory) : []) {
+      if (!filename.endsWith(".toml")) continue;
+      const path = join(directory, filename);
+      const raw = await readText(root, path);
+      let set: FilterSetMeta;
+      try {
+        set = parseFilterSetMeta(Bun.TOML.parse(raw), basename(filename, ".toml"));
+      } catch (error) {
+        throw new FilterBuildError("INVALID_SET", `${path}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      const members = selectMembers(set, hosts, entries, aliases);
+      const ids = orderEntries(members, entries);
+      const setPath = `sets/${set.name}.txt`;
+      const header = [
+        `! Title: ${set.name}`,
+        `! Expires: ${expires}`,
+        `! Version: ${options.gitSha}`,
+        `! Homepage: ${options.homepageUrl}`,
+        `! Included: ${ids.join(", ")}`,
+      ].join("\n");
+      const content = ids.map((id) => files.get(entries.get(id)!.fragmentPath)!)
+        .map((fragment) => fragment.replace(/^(?:\[Adblock[^\n]*\]|!\s*(?:Title|Expires|Version|Homepage):[^\n]*)\n/gim, ""));
+      files.set(setPath, `${header}\n\n${content.join("")}`);
+      sets.set(set.name, { name: set.name, description: set.description, setPath, members });
+    }
+    if (onlyHost !== undefined) {
+      for (const [id, entry] of entries) {
+        if (!relevant.has(id)) {
+          entries.delete(id);
+          files.delete(entry.fragmentPath);
         }
       }
     }
-    await writeCache(root, cachePath, {
-      version: 1,
-      shared: shared!,
-      key: options.cacheKey!,
-      variants,
-    });
-  }
-  return manifest;
+    const manifest: CompiledManifest = {
+      version: options.gitSha,
+      generatedAt: options.generatedAt ?? new Date().toISOString(),
+      expires,
+      hosts: Object.fromEntries(packages.flatMap(({ meta, fragments }) => {
+        const variants = fragments.filter(({ variant }) => entries.has(filterId(meta.host, variant)))
+          .map(({ variant }) => variant);
+        if (variants.length === 0) return [];
+        const defaultVariant = meta.default_variant;
+        return [[meta.host, {
+          displayName: meta.display_name,
+          ...(defaultVariant !== undefined && variants.includes(defaultVariant) ? { defaultVariant } : {}),
+          variants,
+        }]];
+      })),
+      sets: Object.fromEntries(sets),
+      aliases: Object.fromEntries([...aliases].filter(([, id]) => entries.has(id))),
+      entries: Object.fromEntries(entries),
+    };
+    files.set("manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
+    await writeArtifacts(destination, files, previousEntries !== undefined, hooks);
+    if (cacheEnabled) {
+      const variants: IncrementalCache["variants"] = {};
+      for (const { meta, fragments } of packages) {
+        for (const fragment of fragments) {
+          if (fragment.report.errors.length === 0) {
+            variants[filterId(meta.host, fragment.variant)] = {
+              source: fragment.source,
+              ruleCount: fragment.report.ruleCount,
+            };
+          }
+        }
+      }
+      await writeCache(root, cachePath, {
+        version: 1,
+        shared: shared!,
+        key: options.cacheKey!,
+        variants,
+      });
+    }
+    return manifest;
+  });
 }

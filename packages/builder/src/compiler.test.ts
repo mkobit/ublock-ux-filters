@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { lstat, mkdir, mkdtemp, readdir, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { compileWorkspace } from "./compiler.ts";
 import type { FilterParserAdapter } from "./compiler.ts";
 
@@ -318,5 +319,124 @@ test("Protects unrelated files and rejects a competing output lock", async () =>
     await mkdir(join(root, ".dist.filter-build.lock"));
     await expect(build(root)).rejects.toMatchObject({ code: "EEXIST" });
     expect(await Bun.file(join(root, "dist/manifest.json")).exists()).toBe(true);
+  });
+});
+
+test("Recovers the last valid output after an interruption between renames and permits a later build", async () => {
+  await fixture(async (root) => {
+    await writeHost(root, "a.example");
+    await writeSet(root, "all", "all-defaults");
+    await compileWorkspace({
+      rootDir: root,
+      outDir: "dist",
+      gitSha: "v1",
+      homepageUrl: "https://example.org",
+      generatedAt: "2020-01-01T00:00:00.000Z",
+    }, adapter);
+
+    await Bun.write(join(root, "filters/a.example/dark.ubo"), "a.example##html:style(color: white;)\n");
+    const compilerPath = fileURLToPath(new URL("./compiler.ts", import.meta.url));
+    const script = `
+      import { compileWorkspace } from ${JSON.stringify(compilerPath)};
+      const adapter = {
+        async lint(filePath) {
+          return { filePath, ruleCount: 1, errors: [] };
+        },
+      };
+      await compileWorkspace(
+        { rootDir: ${JSON.stringify(root)}, outDir: "dist", gitSha: "v2", homepageUrl: "https://example.org" },
+        adapter,
+        undefined,
+        { beforeOutputSwap: () => { process.exit(1); } },
+      );
+    `;
+    const child = Bun.spawn([process.execPath, "-e", script], { stdout: "ignore", stderr: "ignore" });
+    expect(await child.exited).toBe(1);
+
+    expect(await Bun.file(join(root, "dist/manifest.json")).exists()).toBe(false);
+    expect(await Bun.file(join(root, ".dist.filter-build.lock/owner.json")).exists()).toBe(true);
+    const entriesAfterCrash = await readdir(root);
+    expect(entriesAfterCrash.some((name) => name.startsWith(".dist.filter-build-"))).toBe(true);
+
+    // Even if the next build fails lint, the interrupted previous output is recovered.
+    await Bun.write(join(root, "filters/a.example/dark.ubo"), "BROKEN");
+    await expect(build(root)).rejects.toMatchObject({ code: "LINT_FAILED" });
+    expect((await Bun.file(join(root, "dist/manifest.json")).json()).version).toBe("v1");
+    expect(await Bun.file(join(root, "dist/raw/a.example/dark.txt")).text())
+      .toBe("a.example##html:style(color: black;)\n");
+    expect(await Bun.file(join(root, ".dist.filter-build.lock")).exists()).toBe(false);
+
+    // A subsequent valid build completes cleanly.
+    await Bun.write(join(root, "filters/a.example/dark.ubo"), "a.example##html:style(color: white;)\n");
+    const manifest = await compileWorkspace({
+      rootDir: root,
+      outDir: "dist",
+      gitSha: "v2",
+      homepageUrl: "https://example.org",
+    }, adapter);
+    expect(manifest.version).toBe("v2");
+    expect(await Bun.file(join(root, "dist/raw/a.example/dark.txt")).text())
+      .toBe("a.example##html:style(color: white;)\n");
+    const entriesAfterRecovery = await readdir(root);
+    expect(entriesAfterRecovery.some((name) => name.startsWith(".dist.filter-build"))).toBe(false);
+  });
+});
+
+test("Gives an actionable diagnostic for an active lock owner and preserves simultaneous writer integrity", async () => {
+  await fixture(async (root) => {
+    await writeHost(root, "a.example");
+    await writeSet(root, "all", "all-defaults");
+
+    let releaseFirst!: () => void;
+    let markFirstEntered!: () => void;
+    const firstEntered = new Promise<void>((resolve) => {
+      markFirstEntered = resolve;
+    });
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    const blockingAdapter: FilterParserAdapter = {
+      async lint(filePath, content) {
+        markFirstEntered();
+        await firstGate;
+        return adapter.lint(filePath, content);
+      },
+    };
+
+    const firstBuild = compileWorkspace({
+      rootDir: root,
+      outDir: "dist",
+      gitSha: "first",
+      homepageUrl: "https://example.org",
+    }, blockingAdapter);
+    await firstEntered;
+
+    let caught: unknown;
+    try {
+      await compileWorkspace({
+        rootDir: root,
+        outDir: "dist",
+        gitSha: "second",
+        homepageUrl: "https://example.org",
+      }, adapter);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).toMatchObject({ code: "EEXIST" });
+    const message = (caught as Error).message;
+    expect(message).toContain(`PID ${process.pid}`);
+    expect(message).toContain(".dist.filter-build.lock");
+    expect(message).toContain("dist");
+
+    releaseFirst();
+    const manifest = await firstBuild;
+    expect(manifest.version).toBe("first");
+    expect((await Bun.file(join(root, "dist/manifest.json")).json()).version).toBe("first");
+    expect(await Bun.file(join(root, "dist/raw/a.example/dark.txt")).text())
+      .toBe("a.example##html:style(color: black;)\n");
+    expect(await Bun.file(join(root, "dist/sets/all.txt")).exists()).toBe(true);
+    expect((await readdir(root)).some((name) => name.startsWith(".dist.filter-build"))).toBe(false);
   });
 });

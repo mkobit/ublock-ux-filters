@@ -6,6 +6,19 @@ const rootDir = fileURLToPath(new URL("../../../", import.meta.url));
 const homepageUrl = "https://github.com/mkobit/ublock-ux-filters";
 const usage = "Usage: lint [--host <host>] | build [--incremental] [--host <host>] [--out <directory>]";
 
+const maxEpochSeconds = 8_640_000_000_000;
+
+function parseSourceDateEpoch(value: string): string {
+  if (!/^\d+$/.test(value)) {
+    throw new Error("SOURCE_DATE_EPOCH must be a nonnegative integer");
+  }
+  const seconds = Number(value);
+  if (!Number.isSafeInteger(seconds) || seconds > maxEpochSeconds) {
+    throw new Error(`SOURCE_DATE_EPOCH must be between 0 and ${maxEpochSeconds}`);
+  }
+  return new Date(seconds * 1000).toISOString();
+}
+
 export async function runCli(args: string[], adapter: FilterParserAdapter) {
   const [command] = args;
   if (command !== "build" && command !== "lint") throw new Error(usage);
@@ -37,11 +50,8 @@ export async function runCli(args: string[], adapter: FilterParserAdapter) {
   const gitDate = Bun.spawnSync(["git", "log", "-1", "--format=%cI"], { cwd: rootDir })
     .stdout.toString().trim();
   const epoch = process.env.SOURCE_DATE_EPOCH;
-  if (epoch !== undefined && !/^\d+$/.test(epoch)) {
-    throw new Error("SOURCE_DATE_EPOCH must be a nonnegative integer");
-  }
   const generatedAt = epoch !== undefined
-    ? new Date(Number(epoch) * 1000).toISOString()
+    ? parseSourceDateEpoch(epoch)
     : gitDate ? new Date(gitDate).toISOString() : undefined;
   const outDir = options.get("--out") ?? (host === undefined ? "dist" : `filters/${host}/dist`);
   await compileWorkspace({

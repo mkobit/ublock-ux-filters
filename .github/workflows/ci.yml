@@ -22,3 +22,28 @@ jobs:
       - run: bun run build
       - run: bun test
       - run: bun run typecheck
+
+  visual-capture:
+    needs: checks
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: jdx/mise-action@v3.6.3
+      - run: bun install --frozen-lockfile
+      - uses: actions/cache@v4.3.0
+        with:
+          path: ~/.cache/ublock-ux-filters/browser
+          key: browser-${{ runner.os }}-${{ hashFiles('packages/preview/browser-manifest.json') }}
+      - run: bun run capture --ci --base-ref ${{ github.event.pull_request.base.sha }}
+      - uses: actions/upload-artifact@v4.6.2
+        if: always()
+        with:
+          name: visual-capture
+          path: .artifacts/visual/
+          retention-days: 7

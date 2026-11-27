@@ -128,7 +128,7 @@ Schema validation rules:
 
 *   Each `preview.targets[].url` must parse as an `https:` URL whose hostname matches `allowed_domains` for that host.
 *   Each `preview.targets[].label` must be a unique slug within the host so screenshot filenames are deterministic.
-*   `preview.ci` (default `true`) controls whether CI capture runs for the host; individual `targets[].ci` entries can override it (for example, to skip a specific bot-blocking URL while keeping others enabled).
+*   `preview.ci` (default `true`) controls whether CI capture runs for the host using host-level opt-out precedence: `preview.ci = false` disables CI capture for the entire host regardless of `targets[].ci`; when `preview.ci` is `true` or omitted, individual `targets[].ci = false` entries can opt out specific bot-blocking URLs while keeping others enabled.
 *   `packages/preview` reads `filter.toml` and `dist/manifest.json` directly and loads `dist/raw/<host>/<variant>.txt` without duplicating builder compilation logic.
 
 ### Pinned browser toolchain and cache
@@ -204,8 +204,8 @@ Before navigating to any live third-party URL in `capture`, the session starts a
 1.  **Interactive preview (`bun run preview --host <host> [--variant <variant>]`):** Compiles the current workspace, provisions a visible Firefox session with the target filter, opens the declared `[preview.targets]` tabs, and waits without WebDriver timeouts until the user closes Firefox or sends `SIGINT`.
 2.  **Automated capture (`bun run capture`):**
     *   Accepts `--host` / `--variant` filters or `--base-ref <sha>` for PR diff mode.
-    *   In PR diff mode, diffs modified files under `filters/` against `<base-ref>` to select only affected `<host>::<variant>` pairs, compiles both `<base-ref>` (into a temporary build dir) and the working tree, and marks variants absent from `<base-ref>` as 2-way (`raw` + `pr`) instead of 3-way (`raw` + `base` + `pr`).
-    *   Skips targets with `ci = false` when `--ci` is set, recording `SKIPPED_BY_CONFIG`.
+    *   In PR diff mode, diffs modified files against `<base-ref>` to select affected `<host>::<variant>` pairs (including `.ubo` changes, `filter.toml` changes such as `[preview.targets]` URL or `wait_for` updates, and shared build input changes that alter compiled output), compiles both `<base-ref>` (with its own frozen dependencies in a separate worktree) and the working tree, marks variants absent from `<base-ref>` as 2-way (`raw` + `pr`) instead of 3-way (`raw` + `base` + `pr`), and records removed variants or targets as `removed` in the report.
+    *   In `--ci` mode, skips targets using host-level opt-out precedence (`preview.ci === false` or `target.ci === false`), recording `SKIPPED_BY_CONFIG`.
     *   Runs each pass (`raw`, `base`, `pr`) in its own isolated session through `geckodriver`, passes the loopback canary check (on `base` and `pr`), navigates to each live URL with bounded retries, and saves full-viewport PNGs.
     *   Classifies failures into typed error records (`UBO_LOAD_ERROR`, `BOT_CHALLENGE`, `HTTP_ERROR`, `NAVIGATION_TIMEOUT`, `SELECTOR_TIMEOUT`) containing `finalUrl`, `httpStatus`, `retryCount`, `phaseTimingsMs`, and `failureScreenshotPath`.
     *   Writes `.artifacts/visual/report.json` and a self-contained `.artifacts/visual/index.html` side-by-side comparison gallery.
@@ -487,13 +487,15 @@ Each phase leaves the repository buildable and passing its verification checkpoi
 
 *   **Type / Scope:** TypeScript module and unit tests.
 *   **Rationale and proposed changes:**
-    *   Inspect `git diff --name-only <base-ref>...HEAD -- filters/` and apply deterministic mapping rules:
+    *   Inspect `git diff --name-only <base-ref>...HEAD` and apply deterministic mapping rules:
         *   Changed `filters/<host>/<variant-file>.ubo` -> select `<host>::<variant>` matching `variant.file`.
-        *   Changed `filters/<host>/filter.toml` -> select all variants of `<host>`.
-        *   Other files (such as `README.md` or `assets/`) -> select nothing.
-    *   Compile `<base-ref>` with `git worktree add --detach <tmpWorktree> <base-ref>`, run `bun packages/builder/src/index.ts build --out <tmpDist>` inside `<tmpWorktree>`, and clean up with `git worktree remove --force <tmpWorktree>`.
+        *   Changed `filters/<host>/filter.toml` -> select all `[preview]` variants of `<host>` (including when only `[preview.targets]` `url`, `wait_for`, or `ci` metadata changed without changing compiled rules), and check `<base-ref>` vs `HEAD` for removed variants or removed target labels.
+        *   Changed shared build inputs (`packages/builder/`, `packages/schema/`, `package.json`, `bun.lock`) -> select any `[preview]`-configured `<host>::<variant>` whose compiled `dist/raw/<host>/<variant>.txt` differs between `<base-ref>` and `HEAD`.
+        *   Other files (such as `README.md`, `filters/<host>/README.md`, `filters/<host>/assets/`, or `docs/`) -> select nothing.
+    *   Compile `<base-ref>` with `git worktree add --detach <tmpWorktree> <base-ref>`, run `bun install --frozen-lockfile` and `bun packages/builder/src/index.ts build --out <tmpDist>` inside `<tmpWorktree>`, and clean up `<tmpWorktree>` with `git worktree remove --force <tmpWorktree>`.
     *   Mark a variant absent from `<tmpDist>/manifest.json` as 2-way (`raw` + `pr`) instead of 3-way (`raw` + `base` + `pr`).
-    *   Add unit tests in `diff-select.test.ts` covering `.ubo` changes, `filter.toml` changes, `README.md` ignore, and 2-way fallback for new variants.
+    *   Record variants or `[preview.targets]` labels present in `<base-ref>` and absent in `HEAD` (for affected hosts) with `status: "removed"` and `panels: {}` in the report without launching a browser for them.
+    *   Add unit tests in `diff-select.test.ts` covering `.ubo` changes, `filter.toml` changes (including `url` and `wait_for` changes with unchanged rules), shared build input changes, docs-only ignores, 2-way fallback for new variants, removed variants/targets, and local vs CI host/target `ci` precedence.
 
 #### 14. `packages/preview/src/report.ts` (Create) and `packages/preview/src/report.test.ts` (Create)
 
@@ -506,7 +508,7 @@ Each phase leaves the repository buildable and passing its verification checkpoi
           variant: string;
           label: string;
           url: string;
-          status: "captured" | "skipped_by_config" | "error";
+          status: "captured" | "skipped_by_config" | "removed" | "error";
           panels: { raw?: string; base?: string; pr?: string };
           error?: CaptureError;
         }
@@ -517,9 +519,9 @@ Each phase leaves the repository buildable and passing its verification checkpoi
           results: TargetResult[];
         }
         ```
-    *   Write self-contained `.artifacts/visual/index.html` rendering side-by-side panels (`raw`, `base`, `pr` or `raw`, `pr` labeled `New variant`) and any `CaptureError` details.
+    *   Write self-contained `.artifacts/visual/index.html` rendering side-by-side panels (`raw`, `base`, `pr` or `raw`, `pr` labeled `New variant`), `Skipped by config` / `Removed` entries, and any `CaptureError` details.
     *   Format a Markdown table for `$GITHUB_STEP_SUMMARY` with columns: `Host`, `Variant`, `Target`, `Status`, `Panels`, `Details`.
-    *   Add unit tests in `report.test.ts` covering `report.json` serialization, 2-way vs 3-way HTML rendering, `SKIPPED_BY_CONFIG`, and `$GITHUB_STEP_SUMMARY` Markdown formatting.
+    *   Add unit tests in `report.test.ts` covering `report.json` serialization, 2-way vs 3-way HTML rendering, `SKIPPED_BY_CONFIG`, `removed` variants/targets, and `$GITHUB_STEP_SUMMARY` Markdown formatting.
 
 #### 15. `packages/preview/src/cli.ts` and `package.json` (Modify)
 
@@ -529,7 +531,7 @@ Each phase leaves the repository buildable and passing its verification checkpoi
     *   `capture` flags: `--host <host>` (optional), `--variant <variant>` (optional), `--base-ref <sha>` (optional), `--ci` (optional), `--keep-profile` (optional).
     *   If neither `--host` nor `--base-ref` is passed, capture all hosts with `[preview]` configured.
     *   Always run `bun packages/builder/src/index.ts build` before capturing.
-    *   When `--ci` is set, skip targets where `preview.ci === false` or `target.ci === false` (recording `skipped_by_config`), and exit non-zero if any `UBO_LOAD_ERROR` or `error` occurs.
+    *   When `--ci` is set, use host-level opt-out precedence: skip targets where `preview.ci === false` or `target.ci === false` (recording `skipped_by_config`), and exit non-zero if any `UBO_LOAD_ERROR` or `error` occurs (`removed` entries are informational and do not fail the run).
 
 *   **Phase 4 checkpoint:** Run `mise exec -- bun run typecheck`, `mise exec -- bun test`, and `mise exec -- bun run capture --host news.ycombinator.com`; confirm `.artifacts/visual/report.json`, `index.html`, and PNGs are written.
 

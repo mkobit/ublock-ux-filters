@@ -1,5 +1,5 @@
 import { copyFile, lstat, mkdir, mkdtemp, readdir, rename, rm } from "node:fs/promises";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve, sep } from "node:path";
 import {
   renderAppJs,
   renderCss,
@@ -9,9 +9,22 @@ import type {
   BuildManifest,
   VariantCatalogItem,
 } from "./render.ts";
+import worker from "./worker.ts";
 
-const usage = "Usage: build [--dist <dir>] [--out <dir>] [--base-url <url>]";
+const usage = "Usage: <build [--dist <dir>] [--out <dir>] [--base-url <url>] | serve [--out <dir>] [--port <n>]>";
 const assetExtensions = new Set([".png", ".webp", ".jpg", ".jpeg", ".svg"]);
+const contentTypes: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+};
 
 export interface BuildWebOptions {
   distDir: string;
@@ -155,17 +168,64 @@ export async function buildWebCatalog(options: BuildWebOptions): Promise<void> {
   }
 }
 
-export async function runCli(args: string[], cwd = process.cwd()): Promise<void> {
-  const [command] = args;
-  if (command !== "build") {
-    throw new Error(usage);
+export function createLocalWebHandler(outDir: string): (request: Request) => Promise<Response> {
+  const rootDir = resolve(outDir);
+
+  async function assetsFetch(input: Request | string): Promise<Response> {
+    const request = typeof input === "string" ? new Request(input) : input;
+    const url = new URL(request.url);
+
+    let decodedPath: string;
+    try {
+      decodedPath = decodeURIComponent(url.pathname);
+    } catch {
+      return new Response("Bad Request", { status: 400 });
+    }
+
+    if (decodedPath.includes("\0") || decodedPath.includes("\\")) {
+      return new Response("Bad Request", { status: 400 });
+    }
+
+    const segments = decodedPath.split("/");
+    if (segments.includes("..")) {
+      return new Response("Bad Request", { status: 400 });
+    }
+
+    const relativePath = decodedPath === "/" ? "index.html" : decodedPath.replace(/^\/+/, "");
+    const filePath = resolve(rootDir, relativePath || "index.html");
+    if (filePath !== rootDir && !filePath.startsWith(rootDir + sep)) {
+      return new Response("Bad Request", { status: 400 });
+    }
+
+    if (!(await pathStatus(filePath))?.isFile()) {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    const contentType = contentTypes[extname(filePath).toLowerCase()] ?? "application/octet-stream";
+    const headers = { "Content-Type": contentType };
+    return new Response(request.method === "HEAD" ? null : Bun.file(filePath), {
+      status: 200,
+      headers,
+    });
   }
+
+  return (request: Request): Promise<Response> => {
+    return worker.fetch(request, {
+      ASSETS: {
+        fetch: assetsFetch,
+      },
+    });
+  };
+}
+
+function parseCliOptions(args: string[], allowedOptions: Set<string>): Map<string, string> {
   const options = new Map<string, string>();
   for (let index = 1; index < args.length; index += 2) {
     const option = args[index];
     const value = args[index + 1];
     if (
-      (option !== "--dist" && option !== "--out" && option !== "--base-url")
+      !option
+      || !allowedOptions.has(option)
       || options.has(option)
       || !value
       || value.startsWith("--")
@@ -174,16 +234,43 @@ export async function runCli(args: string[], cwd = process.cwd()): Promise<void>
     }
     options.set(option, value);
   }
+  return options;
+}
 
-  const distDir = resolve(cwd, options.get("--dist") ?? "dist");
-  const outDir = resolve(cwd, options.get("--out") ?? "dist-web");
-  const baseUrl = options.get("--base-url");
+export async function runCli(args: string[], cwd = process.cwd()): Promise<void> {
+  const [command] = args;
+  if (command === "build") {
+    const options = parseCliOptions(args, new Set(["--dist", "--out", "--base-url"]));
+    const distDir = resolve(cwd, options.get("--dist") ?? "dist");
+    const outDir = resolve(cwd, options.get("--out") ?? "dist-web");
+    const baseUrl = options.get("--base-url");
 
-  await buildWebCatalog({
-    distDir,
-    outDir,
-    ...(baseUrl === undefined ? {} : { baseUrl }),
-  });
+    await buildWebCatalog({
+      distDir,
+      outDir,
+      ...(baseUrl === undefined ? {} : { baseUrl }),
+    });
+    return;
+  }
+
+  if (command === "serve") {
+    const options = parseCliOptions(args, new Set(["--out", "--port"]));
+    const outDir = resolve(cwd, options.get("--out") ?? "dist-web");
+    const rawPort = options.get("--port") ?? "8787";
+    const port = Number(rawPort);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error(`Invalid port: ${rawPort}. Expected an integer between 1 and 65535.`);
+    }
+
+    const server = Bun.serve({
+      port,
+      fetch: createLocalWebHandler(outDir),
+    });
+    console.log(`Serving ${outDir} at http://localhost:${server.port}`);
+    return;
+  }
+
+  throw new Error(usage);
 }
 
 if (import.meta.main) {

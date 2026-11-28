@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCli } from "./index.ts";
+import { createLocalWebHandler, runCli } from "./index.ts";
 import { FALLBACK_BASE_URL, renderAppJs } from "./render.ts";
 import type { BuildManifest } from "./render.ts";
 
@@ -622,5 +622,43 @@ describe("@ubdf/web", () => {
     interactive.mockWindow.dispatchPopstate();
     expect(interactive.checkboxes.map((box) => box.checked)).toEqual([false, true]);
     expect(interactive.selectedCountNode.textContent).toBe("1 selected");
+  });
+
+  test("createLocalWebHandler serves built catalog files, custom lists, 404s, and blocks path traversal", async () => {
+    const rootDir = await makeTempWorkspace();
+    await writeFixture(rootDir, { includeAssets: true });
+    await runCli(["build", "--dist", "dist", "--out", "dist-web"], rootDir);
+
+    const outDir = join(rootDir, "dist-web");
+    const handler = createLocalWebHandler(outDir);
+
+    const indexRes = await handler(new Request("http://localhost:8787/"));
+    expect(indexRes.status).toBe(200);
+    expect(indexRes.headers.get("Content-Type")).toBe("text/html; charset=utf-8");
+    expect(await indexRes.text()).toContain("<!DOCTYPE html>");
+
+    const cssRes = await handler(new Request("http://localhost:8787/styles.css"));
+    expect(cssRes.status).toBe(200);
+    expect(cssRes.headers.get("Content-Type")).toBe("text/css; charset=utf-8");
+    expect(await cssRes.text()).toContain(":root");
+
+    const setRes = await handler(new Request("http://localhost:8787/sets/all-defaults.txt"));
+    expect(setRes.status).toBe(200);
+    expect(setRes.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+    expect(await setRes.text()).toContain("example.com##.banner");
+
+    const customRes = await handler(new Request("http://localhost:8787/custom.txt?include=example.com::clean"));
+    expect(customRes.status).toBe(200);
+    expect(customRes.headers.get("Content-Type")).toBe("text/plain; charset=utf-8");
+    expect(await customRes.text()).toContain("! Includes: example.com::clean");
+
+    const missingRes = await handler(new Request("http://localhost:8787/does-not-exist.txt"));
+    expect(missingRes.status).toBe(404);
+
+    const encodedTraversalRes = await handler(new Request("http://localhost:8787/%2e%2e/dist/manifest.json"));
+    expect([400, 404]).toContain(encodedTraversalRes.status);
+
+    const directTraversalRes = await handler(new Request("http://localhost:8787/../dist/manifest.json"));
+    expect([400, 404]).toContain(directTraversalRes.status);
   });
 });

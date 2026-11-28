@@ -38,6 +38,8 @@ Pass `--base-url <url>` to emit canonical `abp:subscribe` links for a deployed h
 mise exec -- bun run build:web --base-url https://example.com
 ```
 
+Run `mise exec -- bun run dev:web` to build and preview the catalog locally (including `/custom.txt?include=...`), or deploy with [`wrangler.jsonc`](wrangler.jsonc) using Cloudflare Workers Static Assets.
+
 ## Add and validate a filter variant
 
 Each site lives in its own directory under [`filters/`](filters/), named by its primary host (for example, [`filters/news.ycombinator.com/`](filters/news.ycombinator.com/)).
